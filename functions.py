@@ -9,9 +9,6 @@ import threading
 import time
 import functools
 import itertools
-
-
-
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -19,8 +16,6 @@ import os
 import math
 import gc
 import traceback # For error reporting
-# Removed time, OrderedDict as cache is removed
-
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -97,7 +92,7 @@ class ChunkedMovingISACDataset(Dataset):
             # ... (rest of prints) ...
             print("-" * 30)
 
-        # --- 4. 加载轨迹数据 (只加载需要的切片 - 强制复制) ---
+        # --- 4. 加载轨迹数据 ---
         try:
             traj_data = np.load(self.traj_path)
             req_slice = slice(self.start_idx_global, self.end_idx_global + 1)
@@ -178,7 +173,6 @@ class ChunkedMovingISACDataset(Dataset):
             m_peak = self.m_peak_indices_slice[idx]   # Expected [K]
 
             # --- Expand array_vectors to match original script's expectation ---
-            # (Keep this if your YOLO script expects Ns dimension in a_vectors)
             if array_vectors.ndim == 3: # [M_dim, K, Nt]
                 array_vectors_expanded = np.tile(array_vectors[np.newaxis, :, :, :], (self.Ns, 1, 1, 1)) # [Ns, M_dim, K, Nt]
             else: raise ValueError(f"Loaded array_vectors unexpected shape: {array_vectors.shape}")
@@ -295,7 +289,7 @@ def compute_echo_from_factors_optimized(
     # 3) 初始化 echo
     echo = torch.zeros((B, Ns, M), dtype=dtype, device=device)
 
-    # 4) 对每个子载波循环（也可改写为向量化，但这样更直观）
+    # 4) 对每个子载波循环
     for m in range(M):
         # 取出第 m 个子载波的 BF 向量：[B, Nt] -> [B,1,1,Nt]
         bf_t = BF_t_all[:, m, :].view(B, 1, 1, Nt)
