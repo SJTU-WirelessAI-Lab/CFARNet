@@ -1,11 +1,8 @@
 import numpy as np
-# import scipy.io as sio # Not needed as we load .npz
 import matplotlib.pyplot as plt
 import torch # Only needed for noise generation tensor
 import os
-# import glob # Not needed
 import argparse
-# from functions_new import load_system_params, initial_rainbow_beam_ULA_YOLO # YOLO function not used here
 from functions import load_system_params # Keep load_system_params if used
 from torch.utils.data import Dataset, DataLoader # Dataset used now
 import time # 引入时间库
@@ -27,7 +24,7 @@ K_BOLTZMANN = 1.38e-23
 T_NOISE_KELVIN = 290 # Standard noise temperature
 c = 3e8 # Speed of light
 
-# --- Dataset Definition (Copied from previous version) ---
+# --- Dataset Definition ---
 class ChunkedEchoDataset(Dataset):
     """
     Loads pre-computed *noiseless* echo signals (yecho),
@@ -196,8 +193,6 @@ class ChunkedEchoDataset(Dataset):
 
 # --- 0.1 Command Line Argument Parsing ---
 parser = argparse.ArgumentParser(description='YOLO method evaluation script testing multiple Pt levels.')
-# --- MODIFIED: Removed pt_dbm ---
-# parser.add_argument('--pt_dbm', type=float, default=30.0, help='Transmit Power (dBm)')
 parser.add_argument('--cuda_device', type=str, default='cpu', help='CUDA device ID (set for env var, but processing uses CPU)')
 parser.add_argument('--num_test_samples', type=int, default=None, help='Number of test samples to process (default: all available)') # Default None
 parser.add_argument('--num_print_details', type=int, default=2, help='Number of samples per Pt for which to print detailed processing info (default: 2)') # Reduced default
@@ -206,10 +201,9 @@ parser.add_argument('--max_targets', type=int, default=None, help='Expected maxi
 
 args = parser.parse_args()
 
-# --- MODIFIED: Define Power Levels to Test ---
 pt_dbm_test_list = [-10.0, 0.0, 10.0, 20.0, 30.0]
 print(f"Will test the following Pt levels: {pt_dbm_test_list} dBm")
-# ---
+
 
 # --- 0.2 Core Configuration ---
 BATCH_SIZE = 1 # Process one sample at a time for this script
@@ -226,21 +220,20 @@ GUARD_SIZE_ANGLE   = 1
 REF_SIZE_ANGLE     = 4
 alpha = 0.8
 
-# YOLO/MUSIC Estimation Parameters (Keep as before)
+# YOLO/MUSIC Estimation Parameters
 SIDELOBE_WINDOW = 10
 LOCAL_MAX_WINDOW = 1
 SIDELOBE_EXCLUDE_SUBCARRIERS = 50
 
-# Search Ranges (Keep as before)
+# Search Ranges
 V_SEARCH_RANGE = np.linspace(-10.5, 10.5, 2001)
 R_SEARCH_RANGE = np.arange(34.5, 200.5, 0.01)
 
-# Beamforming Angle Range (Keep as before)
+# Beamforming Angle Range
 PHI_START_DEG = -60
 PHI_END_DEG = 60
 
 # --- 0.2.1 Determine Data Root Directory ---
-# (Function unchanged)
 def get_latest_experiment_path():
     """Tries to find the latest experiment path from standard locations."""
     try:
@@ -331,7 +324,7 @@ noise_std_dev_tensor = torch.tensor(noise_std_dev, dtype=torch.float32).to(devic
 
 
 # ==============================================================================
-# 1. Data Loading (Load ONCE)
+# 1. Data Loading
 # ==============================================================================
 print("\n--- Data Loading ---")
 print(f"Target dataset: {DATA_ROOT}")
@@ -367,13 +360,11 @@ except Exception as e: print(f"Error initializing dataset: {e}"); traceback.prin
 
 if num_samples_to_run == 0: print("No samples available to process. Exiting."); exit()
 
-# Create DataLoader ONCE
+# Create DataLoader
 test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False,
                          num_workers=NUM_WORKERS, pin_memory=False)
 
-# ==============================================================================
-# --- MODIFIED: Outer Loop for Power Levels ---
-# ==============================================================================
+
 all_metrics = {} # Dictionary to store metrics for each Pt level
 
 for current_pt_dbm in pt_dbm_test_list:
