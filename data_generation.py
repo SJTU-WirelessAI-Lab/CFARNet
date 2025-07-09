@@ -1,20 +1,15 @@
 import numpy as np
-# import torch # Now imported inside functions or main
-# from scipy.io import savemat # Not used
 from trajectory import generate_trajectory
 import math
 import os
 import datetime
 import argparse
 import torch # Import torch globally now
-from tqdm import tqdm # Import tqdm for progress bar
-import traceback # Import for better error printing
-import gc # Import garbage collector
+from tqdm import tqdm
+import traceback 
+import gc 
 f0 = 220e9
-# Functions initial_rainbow_beam_ULA_YOLO, compute_echo_from_factors_optimized,
-# calculate_angle_for_m, find_closest_m_idx remain unchanged.
-# Paste them here if running as a standalone script.
-# ... (Paste the unchanged functions here) ...
+
 def initial_rainbow_beam_ULA_YOLO(N, d, BW, f_scs, fm_list, phi_1, phi_M):
     """
     按照MATLAB代码实现的彩虹波束参数计算
@@ -57,9 +52,7 @@ def compute_echo_from_factors_optimized(
     PS_R, TTD_R,  # both [B, Nt], real
     fm_list       # [M], real
 ):
-    """
-    完整 wideband + PS/TTD 版，PS/TTD 都是 per-batch per-antenna ([B,Nt])。
-    """
+   
     # Ensure input tensors are PyTorch tensors
     if not isinstance(chan_factor, torch.Tensor): chan_factor = torch.from_numpy(chan_factor)
     if not isinstance(a_vectors, torch.Tensor): a_vectors = torch.from_numpy(a_vectors)
@@ -110,7 +103,7 @@ def compute_echo_from_factors_optimized(
     # 3) 初始化 echo
     echo = torch.zeros((B, Ns, M), dtype=dtype, device=device)
 
-    # 4) 对每个子载波循环（也可改写为向量化，但这样更直观）
+    # 4) 对每个子载波循环
     # --- Vectorized echo calculation across subcarriers ---
     # Reshape BF vectors for broadcasting: [B, 1, M, 1, Nt]
     bf_t_exp = BF_t_all.unsqueeze(1).unsqueeze(3)
@@ -135,7 +128,6 @@ def compute_echo_from_factors_optimized(
 
     return echo
 
-# --- Functions for m_peak calculation (Unchanged) ---
 def calculate_angle_for_m(m_idx, f_scs, BW, fc, phi_start_deg, phi_end_deg):
     """
     Calculates the beam angle corresponding to a given subcarrier index m_idx.
@@ -162,33 +154,21 @@ def calculate_angle_for_m(m_idx, f_scs, BW, fc, phi_start_deg, phi_end_deg):
     fraction = np.clip(fraction, 0.0, 1.0)
     angle_rad = np.deg2rad(phi_start_deg) * (1 - fraction) + np.deg2rad(phi_end_deg) * fraction
 
-    # The formula in the original code seems complex, potentially specific.
-    # Using a simpler linear frequency-to-angle mapping for now.
-    # If the original complex formula is required, ensure fc, BW usage is correct.
-    # Let's try to implement the original complex formula carefully:
     fm_for_calc = m_idx * f_scs # Use frequency relative to start f0 for BW calculations?
-    # This part is ambiguous without the original MATLAB reference. Assuming fm is absolute freq.
+    
     fm_abs = f0 + m_idx * f_scs
     if fm_abs <= 1e-9: return np.nan
 
     denom_orig = BW * fm_abs # Original calculation used fm, let's stick to that
     if abs(denom_orig) < 1e-9: return np.nan
 
-    # Let's assume the formula intends fm to be relative to the band start? Or absolute?
-    # Sticking with absolute fm interpretation based on the variable name `fm_base` previous usage
-    term1_num = (BW) * f0 # Check original formula: uses BW - fm or just BW? And fc or f0?
-    # The structure -(f/BW)*phi_M + (1+f/BW)*phi_1 looks more standard for TTD derivation.
-    # The angle calculation provided looks unusual. Let's stick to the provided python version.
-    # **Reverting to the exact provided Python calculation logic**
+    term1_num = (BW) * f0 
+    
     fm_calc = m_idx * f_scs # Use the frequency offset from f0
 
-    # Check for invalid fm (including zero or negative based on original logic's continue)
-    # Note: The original check was just fm_base > 1e-9. If m_idx=0, fm_calc=0.
-    # Let's allow m_idx=0 if phi_start_deg is valid.
 
-    # Check for denominator close to zero
-    denom = BW * (fm_calc + fc) # Using fm_calc (offset) + fc = absolute frequency?
-                               # Or should it be fc? Or f0? Let's use fc as in the code.
+    denom = BW * (fm_calc + fc)
+                              
     if abs(denom) < 1e-9: return np.nan
 
     term1_num = (BW - fm_calc) * fc # Use fc as in code
@@ -198,7 +178,7 @@ def calculate_angle_for_m(m_idx, f_scs, BW, fc, phi_start_deg, phi_end_deg):
     term2 = (term2_num / denom) * np.sin(np.deg2rad(phi_end_deg))
 
     arcsin_arg = term1 + term2
-    # Clip based on provided function (and potential float inaccuracies)
+   
     arcsin_arg = np.clip(arcsin_arg, -1.0, 1.0)
 
     try:
@@ -316,7 +296,7 @@ def main(sample_num=5000, chunk_size=500, experiment_name='moving_target_v2logic
     initial_TTD = initial_TTD.astype(np.float32)
 
 
-    # ===== Trajectory Generation (Unchanged) =====
+    # ===== Trajectory Generation =====
     t_samples = np.linspace(0, total_time, L)
     t_ofdm = t_samples[:Ns] # Shape [Ns,]
 
@@ -354,20 +334,20 @@ def main(sample_num=5000, chunk_size=500, experiment_name='moving_target_v2logic
     num_chunks = math.ceil(sample_num / chunk_size)
     print(f"\nCalculating factors, echo (VECTORIZED) & saving in {num_chunks} chunks (Size: {chunk_size})...")
 
-    # Pre-calculate constants and arrays needed for vectorization (Unchanged)
+    # Pre-calculate constants and arrays needed for vectorization
     idx_antenna = np.arange(Nt) # Shape [Nt,]
     phase_const_array = (1j * 2 * np.pi * d / c)
     phase_const_doppler = (1j * 2 * np.pi * f0 * 2 / c)
     phase_const_distance = (-1j * 2 * np.pi * 2 / c)
 
-    # Reshape common arrays for broadcasting (Unchanged)
+    # Reshape common arrays for broadcasting
     fm_list_M1 = fm_list[:, np.newaxis] # Shape [M+1, 1]
     fm_list_M1_1 = fm_list[np.newaxis, :, np.newaxis] # Shape [1, M+1, 1]
     fm_list_M1_K = fm_list[np.newaxis, :, np.newaxis] # Shape [1, M+1, 1] (For chan factor)
     t_ofdm_Ns_1 = t_ofdm[np.newaxis, :, np.newaxis] # Shape [1, Ns, 1]
     idx_antenna_Nt = idx_antenna[np.newaxis, np.newaxis, :] # Shape [1, 1, Nt]
 
-    # Mask for invalid frequencies (fm <= 0) (Unchanged)
+    # Mask for invalid frequencies (fm <= 0)
     invalid_m_mask = (fm_list <= 1e-9) # Use epsilon for safety
     fm_list_torch = torch.from_numpy(fm_list.astype(np.float32)) # Convert fm_list to tensor once
 
@@ -380,7 +360,6 @@ def main(sample_num=5000, chunk_size=500, experiment_name='moving_target_v2logic
             # B = current_chunk_sample_count (for brevity in comments)
 
             # --- Get data for the current chunk (factors) ---
-            # (Factor calculation code remains the same)
             # Initial states (at t=0) for alpha and array vector
             r_initial_chunk = r_traj_all[start_idx:end_idx, 0, :]     # Shape [B, K]
             theta_initial_chunk = theta_traj_all[start_idx:end_idx, 0, :] # Shape [B, K]
@@ -389,20 +368,17 @@ def main(sample_num=5000, chunk_size=500, experiment_name='moving_target_v2logic
             vr_const_chunk = vr_all[start_idx:end_idx, 0, :]        # Shape [B, K]
 
             # --- Create Masks for Validity (factors) ---
-            # (Masking code remains the same)
             invalid_sample_mask_r = np.any(r_initial_chunk <= 1e-9, axis=1) # Shape [B,] Use epsilon
             invalid_sample_mask_r_const = np.any(r_const_chunk <= 1e-9, axis=1) # Shape [B,] Use epsilon
             invalid_sample_mask = np.logical_or(invalid_sample_mask_r, invalid_sample_mask_r_const) # Shape [B,]
             valid_sample_mask = ~invalid_sample_mask # Shape [B,]
 
             # --- Calculate alphaVal_k for the chunk (factors) ---
-            # (alpha calculation remains the same)
             r_initial_safe = r_initial_chunk + 1e-12
             alphaVal_k_chunk = np.sqrt((lambda_c**2 / (4*np.pi)**3)) / (r_initial_safe**2) # Shape [B, K]
             alphaVal_k_chunk[invalid_sample_mask, :] = 0
 
             # --- Vectorized Array Vector Calculation (factors) ---
-            # (Array vector calculation remains the same)
             theta_initial_rad_chunk = np.deg2rad(theta_initial_chunk) # Shape [B, K]
             sin_theta_chunk = np.sin(theta_initial_rad_chunk)         # Shape [B, K]
             term_array = (phase_const_array *
@@ -414,7 +390,6 @@ def main(sample_num=5000, chunk_size=500, experiment_name='moving_target_v2logic
             array_vector_chunk[invalid_sample_mask, :, :, :] = 0
 
             # --- Vectorized Channel Factor Calculation ---
-            # (Channel factor calculation remains the same)
             phase_doppler = phase_const_doppler * vr_const_chunk[:, np.newaxis, :] * t_ofdm_Ns_1
             dopFactor_chunk = np.exp(phase_doppler) # Shape [B, Ns, K]
             phase_distance = phase_const_distance * r_const_chunk[:, np.newaxis, :] * fm_list_M1_K
@@ -439,7 +414,6 @@ def main(sample_num=5000, chunk_size=500, experiment_name='moving_target_v2logic
             array_vector_tensor = torch.from_numpy(array_vector_chunk.copy())  # [B, M+1, K, Nt]
 
             # Expand array_vector to include Ns dimension [B, 1, M+1, K, Nt] -> [B, Ns, M+1, K, Nt]
-            # We assume the static array vector (based on initial angle) applies to all Ns snapshots
             array_vector_tensor_expanded = array_vector_tensor.unsqueeze(1).expand(
                 current_chunk_sample_count, Ns, M + 1, K, Nt
             )
@@ -481,7 +455,7 @@ def main(sample_num=5000, chunk_size=500, experiment_name='moving_target_v2logic
     except Exception as e:
         print(f"\nError during chunk processing (Chunk {chunk_idx}): {e}"); traceback.print_exc(); raise
 
-    # --- Save Trajectory and System Parameters (Unchanged) ---
+    # --- Save Trajectory and System Parameters ---
     print("\nSaving trajectory data (including m_peak_indices)...")
     traj_filename = os.path.join(base_dir, 'trajectory_data.npz')
     np.savez(traj_filename,
@@ -538,8 +512,6 @@ if __name__ == "__main__":
     parser.add_argument('--random', type=int, default=0, choices=[0, 1], help='轨迹生成模式（0：确保角度差，1：完全随机）')
     args = parser.parse_args()
 
-    # It's recommended to use a smaller number of samples/chunk size when testing
-    # memory-intensive operations like echo calculation.
     print(f"--- Running with Samples={args.samples}, Chunk Size={args.chunk} ---")
 
     experiment_path = main(sample_num=args.samples,
