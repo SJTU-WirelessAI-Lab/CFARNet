@@ -7,34 +7,23 @@ import torch.nn as nn
 import argparse
 import datetime
 import torch.optim as optim
-# Import DataLoader and Dataset from torch.utils.data
-from torch.utils.data import Dataset, DataLoader # random_split removed as unused
+from torch.utils.data import Dataset, DataLoader 
 from tqdm import tqdm
 import math
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
-import gc # 垃圾回收器
-import sys # 导入sys以刷新输出
-import traceback # Import traceback
-from typing import List, Dict, Tuple, Any # For type hinting
+import gc 
+import sys 
+import traceback 
+from typing import List, Dict, Tuple, Any 
+from functions import load_system_params
 
 # --- 常量 ---
 K_BOLTZMANN = 1.38e-23
 T_NOISE_KELVIN = 290 # Standard noise temperature
 
-# --- 导入自定义模块和函数 ---
-# Only need load_system_params potentially from external
-try:
-    # Make sure this function returns M, Ns, K, BW (or f_scs to calculate BW)
-    from functions_new import load_system_params
-except ImportError:
-    print("警告：未能从 'functions_new' 导入 load_system_params。将使用占位符。", flush=True)
-    # Define placeholders if import fails
-    def load_system_params(*args, **kwargs):
-        print("警告: 使用占位符 load_system_params。请确保返回 M, Ns, K, BW 或 f_scs。")
-        # Use None for K initially, it will be set by args.max_targets later
-        mock_params = {'M': 2047, 'Ns': 32, 'K': None, 'BW': 1e9}
-        return (mock_params['M'], mock_params['Ns'], mock_params['K'], mock_params['BW'])
+
+
 
 # --- 定义自定义数据集类 (读取 echo 和 m_peak) ---
 class ChunkedEchoDataset(Dataset):
@@ -150,7 +139,7 @@ class ChunkedEchoDataset(Dataset):
 
 # --- 模型定义 ---
 
-# --- CNN Model (IndexPredictionCNN) --- (Unchanged)
+# --- CNN Model (IndexPredictionCNN) ---
 class IndexPredictionCNN(nn.Module):
     def __init__(self, M_plus_1, Ns, hidden_dim=512, dropout=0.2):
         super().__init__()
@@ -236,7 +225,7 @@ class IndexPredictionCNN(nn.Module):
 
 # --- 辅助函数定义 ---
 
-# --- Gaussian Target Generation --- (Handles invalid indices like -1)
+# --- Gaussian Target Generation ---
 def create_gaussian_target(peak_indices, M_plus_1, sigma, device):
     if isinstance(peak_indices, (list, np.ndarray)):
         peak_indices = torch.tensor(peak_indices, device=device, dtype=torch.long)
@@ -270,7 +259,7 @@ def create_gaussian_target(peak_indices, M_plus_1, sigma, device):
     return target_smooth
 
 
-# --- Simplified Combined Loss (Only Main Loss) --- (Unchanged)
+# --- Simplified Combined Loss (Only Main Loss) --- 
 class CombinedLoss(nn.Module):
     def __init__(self, main_loss_type='bce', loss_sigma=1.0, device='cpu'):
         """
@@ -445,7 +434,7 @@ def calculate_accuracy_topk(pred_probs, true_peak_indices_batch, k, tolerance):
     return accuracy
 
 
-# --- 可视化函数 --- (Unchanged, but uses updated folders dict)
+# --- 可视化函数 ---
 def visualize_predictions(pred_probs_list, target_list, folders, timestamp, M_plus_1,
                           acc_threshold=0.5, acc_tolerance=3, # Tolerance not used here
                           is_target_distribution=False, num_samples=4):
@@ -481,7 +470,7 @@ def visualize_predictions(pred_probs_list, target_list, folders, timestamp, M_pl
     plt.close(fig)
 
 
-# --- 测试函数 (MODIFIED for multi-point evaluation) ---
+# --- 测试函数 ---
 def test_model(model: nn.Module,
                test_loader: DataLoader,
                device: torch.device,
@@ -620,7 +609,7 @@ def test_model(model: nn.Module,
 
 # --- 主执行函数 ---
 def main():
-    # --- 参数解析 (Consolidated target number control) ---
+    # --- 参数解析 ---
     parser = argparse.ArgumentParser(description='训练峰值索引预测模型 (CNN - 使用随机发射功率训练)')
     # --- Training Hyperparameters ---
     parser.add_argument('--epochs', type=int, default=60, help="训练的总轮数")
@@ -631,15 +620,14 @@ def main():
     parser.add_argument('--patience', type=int, default=7, help='早停轮数 (基于最低验证功率点的损失)')
     # --- System/Data Parameters ---
     parser.add_argument('--data_dir', type=str, default=None, help='包含 echoes/ 和 *.npz 文件的数据根目录路径')
-    # parser.add_argument('--pt_dbm', type=float, default=10.0, help='用于验证/测试/参考SNR计算的固定发射功率 (dBm)') # REMOVED - Replaced by list
     parser.add_argument('--min_pt_dbm', type=float, default=-10.0, help='训练期间使用的最小发射功率 (dBm)')
     parser.add_argument('--max_pt_dbm', type=float, default=30.0, help='训练期间使用的最大发射功率 (dBm)')
-    # --- MODIFIED: Power Sampling Method ---
+
     parser.add_argument('--power_sampling', type=str, default='linear', choices=['linear', 'dbm'], help='训练时发射功率的采样方式 (linear: 在mW上均匀采样, dbm: 在dBm上均匀采样)')
-    # --- MODIFIED: Validation/Test Power List ---
+
     parser.add_argument('--val_pt_dbm_list', type=str, default="-10,0,10", help='用于验证和测试的固定发射功率 (dBm) 列表，以逗号分隔')
     # ---
-    # --- MODIFIED: Consolidated Target Number Control ---
+
     parser.add_argument('--max_targets', type=int, default=4, help='数据集中预期的最大目标/用户数量 (K_max)')
     # ---
     # --- Model Hyperparameters ---
@@ -648,7 +636,7 @@ def main():
     # --- Loss/Accuracy Parameters ---
     parser.add_argument('--loss_type', type=str, default='bce', choices=['bce', 'kldiv'], help='主损失函数类型')
     parser.add_argument('--loss_sigma', type=float, default=1.0, help='高斯平滑目标的标准差 (BCE时用于目标生成)')
-    # --- MODIFIED: Updated help text ---
+
     parser.add_argument('--top_k', type=int, default=4, help='计算准确率时使用的Top-K预测数量 (建议设置为 --max_targets 的值)')
     # ---
     parser.add_argument('--accuracy_threshold', type=float, default=0.5, help='[仅用于可视化] 标记预测峰值的概率阈值')
@@ -736,7 +724,7 @@ def main():
     M_plus_1 = M + 1
 
     print(f"系统参数: M={M}, Ns={Ns}, BW={BW:.2e}", flush=True)
-    # --- MODIFIED: Print K from params vs args.max_targets ---
+    # --- Print K from params vs args.max_targets ---
     print(f"命令行预期最大目标数 (args.max_targets): {args.max_targets}")
     if K_data_param is not None:
         print(f"数据参数文件中的 K 值 (system_params.npz['K']): {K_data_param}")
@@ -755,7 +743,6 @@ def main():
     print(f"噪声标准差 (实/虚): {noise_std_dev:.3e}")
 
     # --- Calculate reference scaling factors for VALIDATION/TESTING using args.val_pt_dbm_list ---
-    # (Calculation moved inside test_model, but print min/max ref factors here)
     min_val_pt_dbm = min(args.val_pt_dbm_list)
     max_val_pt_dbm = max(args.val_pt_dbm_list)
     min_val_pt_linear_mw = 10**(min_val_pt_dbm / 10.0)
@@ -791,7 +778,7 @@ def main():
     print(f"  目标数据分割: Train=[{train_start_idx}-{train_end_idx}] ({train_size}), Val=[{val_start_idx}-{val_end_idx}] ({val_size}), Test=[{test_start_idx}-{test_end_idx}] ({test_size})")
 
     try:
-        # --- MODIFIED: Use args.max_targets for expected_k ---
+        # --- Use args.max_targets for expected_k ---
         test_dataset = ChunkedEchoDataset(data_root, test_start_idx, test_end_idx, expected_k=args.max_targets)
         val_dataset = ChunkedEchoDataset(data_root, val_start_idx, val_end_idx, expected_k=args.max_targets)
         train_dataset = ChunkedEchoDataset(data_root, train_start_idx, train_end_idx, expected_k=args.max_targets)
@@ -810,7 +797,7 @@ def main():
     model = IndexPredictionCNN(M_plus_1, Ns, args.hidden_dim, args.dropout).to(device)
     print(f"模型参数量: {count_parameters(model)}", flush=True)
 
-    # --- Load Pretrained Model Logic --- (Unchanged logic)
+    # --- Load Pretrained Model Logic ---
     load_path = None
     if args.load_model or args.model_dir or args.load_model_path:
         print("尝试加载预训练 CNN 模型...", flush=True)
@@ -996,13 +983,13 @@ def main():
                  postfix_dict = {'Pt': f"{current_pt_dbm_for_log:.1f}", 'L': f"{loss.item():.3f}", f'Top{args.top_k}Hit': f"{batch_accuracy:.2f}"}
                  train_pbar.set_postfix(postfix_dict)
 
-            # --- Detailed Print (Now uses args.top_k dynamically) --- (Unchanged logic)
+            # --- Detailed Print --- 
             if batch_idx > 0 and batch_idx % 100 == 0: # Reduced frequency
                  tqdm.write("-" * 20, file=sys.stdout)
                  with torch.no_grad():
                       num_samples_to_print = min(2, batch_size) # Reduced number
                       for s in range(num_samples_to_print):
-                           # --- MODIFIED: Use args.top_k for k_top_print ---
+                           # --- Use args.top_k for k_top_print ---
                            k_top_print = min(args.top_k, pred_probs_detached.shape[1])
                            # ---
                            _, topk_indices_print = torch.topk(pred_probs_detached[s], k=k_top_print)
@@ -1128,7 +1115,7 @@ def main():
 
 
     # --- Run Final Test (using multiple fixed test powers) ---
-    # --- MODIFIED: Call test_model with list ---
+    # --- Call test_model with list ---
     final_test_results_per_pt, all_pred_probs_list_viz, all_targets_smooth_list_viz = test_model(
         model, test_loader, device, args, M_plus_1,
         args.val_pt_dbm_list, # Use the specified list of powers for final test
@@ -1210,7 +1197,7 @@ def main():
         f.write(f"实验: CNN - 随机功率训练 ({args.power_sampling} sampling)\n") # Added sampling info
         f.write(f"时间戳: {timestamp}\n"); f.write(f"数据根目录: {data_root}\n"); f.write(f"输出基目录: {folders['output_base']}\n"); f.write(f"设备: {device}\n")
         f.write("\n--- 参数 ---\n")
-        # --- MODIFIED: Exclude num_targets if it somehow exists ---
+        # --- Exclude num_targets if it somehow exists ---
         args_dict = vars(args)
         args_dict.pop('num_targets', None) # Remove if it exists
         # Format list arg nicely
@@ -1218,7 +1205,7 @@ def main():
         [f.write(f"  {k}: {v}\n") for k, v in sorted(args_dict.items())]
         # ---
         f.write("\n--- 系统参数 ---\n")
-        # --- MODIFIED: Report K_data_param if available ---
+        # --- Report K_data_param if available ---
         f.write(f"  M={M}, Ns={Ns}, BW={BW:.2e}\n")
         if K_data_param is not None:
              f.write(f"  参数文件中的 K (K_data_param): {K_data_param}\n")
