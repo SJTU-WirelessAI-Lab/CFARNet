@@ -5,31 +5,31 @@ import torch
 import torch.nn as nn
 from train import IndexPredictionCNN
 
-    class IndexPredictionCNN(nn.Module):
-        def __init__(self, M_plus_1, Ns, hidden_dim=512, dropout=0.2): # Ensure params match
-            super().__init__()
-            print("WARNING: Using Placeholder CNN Definition!")
-            self.M_plus_1 = M_plus_1; self.Ns = Ns
-            final_channels = 512; self.hidden_dim=hidden_dim; self.dropout=dropout
-            self.feature_extractor = nn.Sequential(
-                nn.Conv2d(1, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False), nn.BatchNorm2d(64), nn.LeakyReLU(0.1),
-                nn.Conv2d(64, 128, kernel_size=(3, 3), stride=(2, 1), padding=(1, 1), bias=False), nn.BatchNorm2d(128), nn.LeakyReLU(0.1), nn.Dropout2d(0.1),
-                nn.Conv2d(128, 256, kernel_size=(3, 3), stride=(2, 1), padding=(1, 1), bias=False), nn.BatchNorm2d(256), nn.LeakyReLU(0.1), nn.Dropout2d(0.1),
-                nn.Conv2d(256, final_channels, kernel_size=(3, 3), stride=(2, 1), padding=(1, 1), bias=False), nn.BatchNorm2d(final_channels), nn.LeakyReLU(0.1), nn.Dropout2d(0.1)
-            )
-            self.predictor = nn.Sequential(
-                nn.Conv1d(final_channels, hidden_dim, kernel_size=3, padding=1, bias=False), nn.BatchNorm1d(hidden_dim), nn.LeakyReLU(0.1), nn.Dropout(dropout),
-                nn.Conv1d(hidden_dim, hidden_dim // 2, kernel_size=3, padding=1, bias=False), nn.BatchNorm1d(hidden_dim // 2), nn.LeakyReLU(0.1), nn.Dropout(dropout),
-                nn.Conv1d(hidden_dim // 2, 1, kernel_size=1)
-            )
-            print("INFO: Using actual IndexPredictionCNN definition (copied).") # Inform if placeholder is overridden
-        def forward(self, Y_complex):
-            Y_fft=torch.fft.fft(Y_complex, dim=1); Y_fft_shift=torch.fft.fftshift(Y_fft, dim=1)
-            Y_magnitude=torch.abs(Y_fft_shift); Y_magnitude_log=torch.log1p(Y_magnitude)
-            Y_input=Y_magnitude_log.unsqueeze(1)
-            features=self.feature_extractor(Y_input); features_pooled=torch.max(features, dim=2)[0]
-            logits=self.predictor(features_pooled); logits=logits.squeeze(1)
-            return logits, Y_magnitude_log
+class IndexPredictionCNN(nn.Module):
+    def __init__(self, M_plus_1, Ns, hidden_dim=512, dropout=0.2): # Ensure params match
+        super().__init__()
+        print("WARNING: Using Placeholder CNN Definition!")
+        self.M_plus_1 = M_plus_1; self.Ns = Ns
+        final_channels = 512; self.hidden_dim=hidden_dim; self.dropout=dropout
+        self.feature_extractor = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False), nn.BatchNorm2d(64), nn.LeakyReLU(0.1),
+            nn.Conv2d(64, 128, kernel_size=(3, 3), stride=(2, 1), padding=(1, 1), bias=False), nn.BatchNorm2d(128), nn.LeakyReLU(0.1), nn.Dropout2d(0.1),
+            nn.Conv2d(128, 256, kernel_size=(3, 3), stride=(2, 1), padding=(1, 1), bias=False), nn.BatchNorm2d(256), nn.LeakyReLU(0.1), nn.Dropout2d(0.1),
+            nn.Conv2d(256, final_channels, kernel_size=(3, 3), stride=(2, 1), padding=(1, 1), bias=False), nn.BatchNorm2d(final_channels), nn.LeakyReLU(0.1), nn.Dropout2d(0.1)
+        )
+        self.predictor = nn.Sequential(
+            nn.Conv1d(final_channels, hidden_dim, kernel_size=3, padding=1, bias=False), nn.BatchNorm1d(hidden_dim), nn.LeakyReLU(0.1), nn.Dropout(dropout),
+            nn.Conv1d(hidden_dim, hidden_dim // 2, kernel_size=3, padding=1, bias=False), nn.BatchNorm1d(hidden_dim // 2), nn.LeakyReLU(0.1), nn.Dropout(dropout),
+            nn.Conv1d(hidden_dim // 2, 1, kernel_size=1)
+        )
+        print("INFO: Using actual IndexPredictionCNN definition (copied).") # Inform if placeholder is overridden
+    def forward(self, Y_complex):
+        Y_fft=torch.fft.fft(Y_complex, dim=1); Y_fft_shift=torch.fft.fftshift(Y_fft, dim=1)
+        Y_magnitude=torch.abs(Y_fft_shift); Y_magnitude_log=torch.log1p(Y_magnitude)
+        Y_input=Y_magnitude_log.unsqueeze(1)
+        features=self.feature_extractor(Y_input); features_pooled=torch.max(features, dim=2)[0]
+        logits=self.predictor(features_pooled); logits=logits.squeeze(1)
+        return logits, Y_magnitude_log
 
 import torch.nn.functional as F
 import os

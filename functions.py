@@ -26,27 +26,27 @@ import traceback # For error reporting
 
 class ChunkedMovingISACDataset(Dataset):
     """
-    适配 V2 Chunked 数据格式的数据集 (包含 m_peak_indices)
-    - 从 system_params.npz 读取配置
-    - **无缓存**: 每次访问都直接从磁盘加载对应 chunk (使用 mmap)
-    - **返回完整的 Ns 时间步** 的轨迹数据切片
-    - 返回 'm_peak' 索引
+    Dataset adapted for V2 Chunked data format (including m_peak_indices)
+    - Read configuration from system_params.npz
+    - **No cache**: Direct loading from disk for each access (using mmap)
+    - **Return complete Ns time steps** of trajectory data slice
+    - Return 'm_peak' indices
     """
     def __init__(self, data_root, start_idx_global=0, end_idx_global=None, verbose=True):
         """
-        初始化数据集 (无缓存模式, 返回完整 Ns 轨迹)
+        Initialize dataset (no cache mode, returns complete Ns trajectory)
 
         Args:
-            data_root (str): 数据根目录.
-            start_idx_global (int): 要加载的全局起始样本索引 (包含).
-            end_idx_global (int, optional): 要加载的全局结束样本索引 (包含). Defaults to None (加载到最后).
-            verbose (bool): 是否打印详细信息.
+            data_root (str): Data root directory.
+            start_idx_global (int): Global start sample index to load (inclusive).
+            end_idx_global (int, optional): Global end sample index to load (inclusive). Defaults to None (load to end).
+            verbose (bool): Whether to print detailed information.
         """
         super().__init__()
         self.data_root = data_root
         self.verbose = verbose
 
-        # --- 1. 验证路径 ---
+        # --- 1. Validate paths ---
         self.traj_path = os.path.join(data_root, 'trajectory_data.npz')
         self.params_path = os.path.join(data_root, 'system_params.npz')
         self.channel_factors_dir = os.path.join(data_root, 'channel_factors')
@@ -57,7 +57,7 @@ class ChunkedMovingISACDataset(Dataset):
         if not os.path.isdir(self.channel_factors_dir): raise NotADirectoryError(f"Channel dir missing: {self.channel_factors_dir}")
         if not os.path.isdir(self.array_vectors_dir): raise NotADirectoryError(f"Array dir missing: {self.array_vectors_dir}")
 
-        # --- 2. 加载系统参数 ---
+        # --- 2. Load system parameters ---
         try:
             params = np.load(self.params_path)
             self.total_samples_generated = int(params['sample_num'])
@@ -74,7 +74,7 @@ class ChunkedMovingISACDataset(Dataset):
         except Exception as e:
             raise RuntimeError(f"Error loading system params: {e}")
 
-        # --- 3. 确定要加载的样本范围 ---
+        # --- 3. Determine sample range to load ---
         self.start_idx_global = max(0, start_idx_global)
         if end_idx_global is None:
             self.end_idx_global = self.total_samples_generated - 1
@@ -86,13 +86,13 @@ class ChunkedMovingISACDataset(Dataset):
         if self.num_samples <= 0: print(f"Warning: No samples selected. Dataset length is 0.")
 
         if self.verbose:
-            # ... (打印信息不变) ...
+            # ... (print information unchanged) ...
             print("-" * 30)
             print(f"ChunkedMovingISACDataset Initializing (No Cache, Full Ns Traj):") # Indicate change
             # ... (rest of prints) ...
             print("-" * 30)
 
-        # --- 4. 加载轨迹数据 ---
+        # --- 4. Load trajectory data ---
         try:
             traj_data = np.load(self.traj_path)
             req_slice = slice(self.start_idx_global, self.end_idx_global + 1)
@@ -125,7 +125,6 @@ class ChunkedMovingISACDataset(Dataset):
 
         # --- 5. No Cache Initialization Needed ---
         pass
-
 
     def __len__(self):
         return self.num_samples
@@ -219,27 +218,27 @@ class ChunkedMovingISACDataset(Dataset):
 
 def initial_rainbow_beam_ULA_YOLO(N, d, BW, f_scs, fm_list, phi_1, phi_M):
     """
-    按照MATLAB代码实现的彩虹波束参数计算
+    Rainbow beam parameter calculation implemented according to MATLAB code
     
     Args:
-        N: 天线数量
-        d: 天线间距
-        BW: 带宽
-        M: 子载波数量
-        fm_list: 子载波频率列表
-        phi_1: 最低频对应的phi角（单位：度）
-        phi_M: 最高频对应的phi角（单位：度）
+        N: Number of antennas
+        d: Antenna spacing
+        BW: Bandwidth
+        M: Number of subcarriers
+        fm_list: Subcarrier frequency list
+        phi_1: Phi angle corresponding to the lowest frequency (unit: degrees)
+        phi_M: Phi angle corresponding to the highest frequency (unit: degrees)
     
     Returns:
-        TTD: 时间延迟补偿
-        PS: 相位补偿
+        TTD: Time delay compensation
+        PS: Phase compensation
     """
     c = 3e8
     
-    # 按generate.py的计算逻辑
+    # Calculation logic according to generate.py
     antenna_idx = (np.arange(N) - (N - 1) / 2)  
     
-    # 计算初始PS和TTD
+    # Calculate initial PS and TTD
     PS = -fm_list[0] * antenna_idx * d * np.sin(np.deg2rad(phi_1)) / c
     TTD = -PS / BW - ((fm_list[0] + BW) * antenna_idx * d * np.sin(np.deg2rad(phi_M))) / (BW * c)
     PS  = 2.0 * np.pi * PS                # [rad]
@@ -257,55 +256,55 @@ def compute_echo_from_factors_optimized(
     fm_list       # [M], real
 ):
     """
-    完整 wideband + PS/TTD 版，PS/TTD 都是 per-batch per-antenna ([B,Nt])。
+    Complete wideband + PS/TTD version, PS/TTD are both per-batch per-antenna ([B,Nt]).
     """
     B, Ns, M, K = chan_factor.shape
     Nt = a_vectors.shape[-1]
     device = chan_factor.device
     dtype = torch.complex64
 
-    # 保证在同一设备
+    # Ensure all tensors are on the same device
     fm = fm_list.to(device)          # [M]
     PS_T = PS_T.to(device)           # [B, Nt]
     TTD_T = TTD_T.to(device)         # [B, Nt]
     PS_R = PS_R.to(device)
     TTD_R = TTD_R.to(device)
 
-    f0 = fm[0]                       # 基准频率
+    f0 = fm[0]                       # Reference frequency
     freq_diff = fm - f0              # [M]
     scale = 1e9
 
-    # 1) 先构造 phase_t 和 phase_r: 形状 [B, M, Nt]
+    # 1) First construct phase_t and phase_r: shape [B, M, Nt]
     #    phase_t[b,m,n] = -PS_T[b,n] - 2π * TTD_T[b,n] * freq_diff[m]/scale
     phase_t = (- PS_T.unsqueeze(1)                # [B,1,Nt]
                - 2*np.pi * (freq_diff.view(1,M,1) * TTD_T.unsqueeze(1)) / scale)  # [B,M,Nt]
     phase_r = (- PS_R.unsqueeze(1)
                - 2*np.pi * (freq_diff.view(1,M,1) * TTD_R.unsqueeze(1)) / scale)
 
-    # 2) 计算 BF_t_all, BF_r_all: 形状 [B, M, Nt]
+    # 2) Calculate BF_t_all, BF_r_all: shape [B, M, Nt]
     BF_t_all = torch.exp(1j * phase_t).to(dtype)  # [B,M,Nt]
     BF_r_all = torch.exp(1j * phase_r).to(dtype)
 
-    # 3) 初始化 echo
+    # 3) Initialize echo
     echo = torch.zeros((B, Ns, M), dtype=dtype, device=device)
 
-    # 4) 对每个子载波循环
+    # 4) Loop over each subcarrier
     for m in range(M):
-        # 取出第 m 个子载波的 BF 向量：[B, Nt] -> [B,1,1,Nt]
+        # Extract the m-th subcarrier's BF vector: [B, Nt] -> [B,1,1,Nt]
         bf_t = BF_t_all[:, m, :].view(B, 1, 1, Nt)
         bf_r = BF_r_all[:, m, :].view(B, 1, 1, Nt)
 
-        # 信道和 steering vectors
+        # Channel and steering vectors
         h_m = chan_factor[:, :, m, :]       # [B, Ns, K]
         a_m = a_vectors[:, :, m, :, :]      # [B, Ns, K, Nt]
 
-        # 发射端贡献: conj(a) · bf_t -> [B, Ns, K]
+        # Transmit contribution: conj(a) · bf_t -> [B, Ns, K]
         tx = torch.sum(a_m.conj() * bf_t, dim=-1)
-        # 接收端贡献: bf_r^H · a -> [B, Ns, K]
+        # Receive contribution: bf_r^H · a -> [B, Ns, K]
         rx = torch.sum(bf_r.conj() * a_m, dim=-1)
         # Pt=(1000)#mW    
         # import math
-        # 整体 echo
+        # Overall echo
         echo[:, :, m] = torch.sum(h_m * tx * rx, dim=-1)  # [B, Ns]
 
     return echo
@@ -318,7 +317,7 @@ def load_system_params(param_file):
     Delta_T = data['Delta_T']
     M = int(data['M'])
     K = int(data['K'])
-    Ns = int(data['Ns'])  # OFDM符号数量
+    Ns = int(data['Ns'])  # Number of OFDM symbols
     Nt = int(data['Nt'])
     Nr = int(data['Nr'])
     d = data['d']
@@ -329,77 +328,77 @@ def load_system_params(param_file):
 
 def yolo_detection(y_echo, K, fc, f_scs, Ns, M, phi_start_deg=-60, phi_end_deg=60):
     """
-    YOLO算法实现，用于检测多个目标的位置和速度
+    YOLO algorithm implementation for detecting positions and velocities of multiple targets
     
     Args:
-        y_echo: 输入波形数据 [num_samples, Ns, M]
-        K: 目标数量
-        fc: 中心频率
-        f_scs: 子载波间隔
-        Ns: OFDM符号数量
-        M: 子载波数量
-        phi_start_deg: 最小角度（默认-60度）
-        phi_end_deg: 最大角度（默认60度）
+        y_echo: Input waveform data [num_samples, Ns, M]
+        K: Number of targets
+        fc: Center frequency
+        f_scs: Subcarrier spacing
+        Ns: Number of OFDM symbols
+        M: Number of subcarriers
+        phi_start_deg: Minimum angle (default -60 degrees)
+        phi_end_deg: Maximum angle (default 60 degrees)
         
     Returns:
-        est_theta: 估计的角度 [num_samples, K]
-        est_r: 估计的距离 [num_samples, K]
-        est_v: 估计的速度 [num_samples, K]
-        est_subcarriers: 估计的子载波索引 [num_samples, K]
+        est_theta: Estimated angles [num_samples, K]
+        est_r: Estimated distances [num_samples, K]
+        est_v: Estimated velocities [num_samples, K]
+        est_subcarriers: Estimated subcarrier indices [num_samples, K]
     """
-    # 系统参数
-    c = 3e8         # 光速
-    Ts = 1 / f_scs  # OFDM符号时长
-    BW = M * f_scs  # 带宽
+    # System parameters
+    c = 3e8         # Speed of light
+    Ts = 1 / f_scs  # OFDM symbol duration
+    BW = M * f_scs  # Bandwidth
     
-    # 2D-CFAR 参数
+    # 2D-CFAR parameters
     guard_size_doppler = 2
     ref_size_doppler   = 4
     guard_size_angle   = 1
     ref_size_angle     = 4
-    alpha = 1  # 降低阈值因子，使检测更敏感
+    alpha = 1  # Lower threshold factor to make detection more sensitive
 
-    # YOLO/MUSIC 估计参数
-    sidelobe_window = 10  # 局部窗口大小
+    # YOLO/MUSIC estimation parameters
+    sidelobe_window = 10  # Local window size
 
-    # 更精细的搜索范围
-    v_search_range = np.linspace(-12, 12, 2001)  # 速度搜索网格
-    r_search_range = np.arange(15, 200+0.01, 0.01)  # 距离搜索，步长0.01
+    # More refined search ranges
+    v_search_range = np.linspace(-12, 12, 2001)  # Velocity search grid
+    r_search_range = np.arange(15, 200+0.01, 0.01)  # Distance search, step size 0.01
 
-    # 初始化结果数组
+    # Initialize result arrays
     num_samp = y_echo.shape[0]
     est_theta = np.zeros((num_samp, K))
     est_r = np.zeros((num_samp, K))
     est_v = np.zeros((num_samp, K))
     est_subcarriers = np.zeros((num_samp, K), dtype=int)
 
-    # 主循环，对每个样本做 YOLO 检测
+    # Main loop, perform YOLO detection for each sample
     for idx in range(num_samp):
-        # 1) 提取该样本回波，形状 (Ns, M)
+        # 1) Extract echo for this sample, shape (Ns, M)
         Y_sample = y_echo[idx, :, :]
 
-        # 2) 静态杂波滤除
+        # 2) Static clutter filtering
         Y_dynamic = Y_sample.copy()
 
-        # 3) 对符号维（行方向）做 FFT，并 fftshift 后得到多普勒信息
+        # 3) FFT along symbol dimension (row direction) and fftshift to get Doppler information
         Y_fft = np.fft.fft(Y_dynamic, axis=0)
         Y_AD = np.fft.fftshift(Y_fft, axes=0)
-        G_AD = np.abs(Y_AD)  # 功率谱
+        G_AD = np.abs(Y_AD)  # Power spectrum
 
-        # 4) 2D-CFAR 检测峰值（多普勒×子载波平面）
+        # 4) 2D-CFAR peak detection (Doppler×subcarrier plane)
         cfar_mask = np.zeros_like(G_AD, dtype=bool)
         Ns_dim, M_dim = G_AD.shape
 
-        # 计算检测范围
+        # Calculate detection range
         d_min = ref_size_doppler + guard_size_doppler
         d_max = Ns_dim - (ref_size_doppler + guard_size_doppler) - 1
         m_min = ref_size_angle + guard_size_angle
         m_max = M_dim - (ref_size_angle + guard_size_angle) - 1
 
-        # 2D-CFAR检测
+        # 2D-CFAR detection
         for d in range(d_min, d_max+1):
             for m in range(m_min, m_max+1):
-                # 参考窗口
+                # Reference window
                 d_win = np.arange(d - (ref_size_doppler + guard_size_doppler),
                                 d + (ref_size_doppler + guard_size_doppler) + 1)
                 m_win = np.arange(m - (ref_size_angle + guard_size_angle),
@@ -407,7 +406,7 @@ def yolo_detection(y_echo, K, fc, f_scs, Ns, M, phi_start_deg=-60, phi_end_deg=6
                 ref_window = G_AD[np.ix_(d_win, m_win)]
                 total_ref_count = (2*ref_size_doppler + 2*guard_size_doppler + 1) * (2*ref_size_angle + 2*guard_size_angle + 1)
 
-                # 守卫单元
+                # Guard cells
                 d_guard = np.arange(d - guard_size_doppler, d + guard_size_doppler + 1)
                 m_guard = np.arange(m - guard_size_angle, m + guard_size_angle + 1)
                 guard_cells = G_AD[np.ix_(d_guard, m_guard)]
@@ -419,7 +418,7 @@ def yolo_detection(y_echo, K, fc, f_scs, Ns, M, phi_start_deg=-60, phi_end_deg=6
                 if G_AD[d, m] > threshold:
                     cfar_mask[d, m] = True
 
-        # 找到候选峰值点
+        # Find candidate peak points
         cand_indices = np.argwhere(cfar_mask)
         if cand_indices.size == 0:
             continue
@@ -430,7 +429,7 @@ def yolo_detection(y_echo, K, fc, f_scs, Ns, M, phi_start_deg=-60, phi_end_deg=6
         local_window = 10
         kept_idx = np.zeros(len(cand_d), dtype=bool)
 
-        # 局部极大值检测
+        # Local maximum detection
         for i in range(len(cand_d)):
             d_val = cand_d[i]
             m_val = cand_m[i]
@@ -445,7 +444,7 @@ def yolo_detection(y_echo, K, fc, f_scs, Ns, M, phi_start_deg=-60, phi_end_deg=6
             if val_ >= np.max(sub_mat):
                 kept_idx[i] = True
 
-        # 筛选候选
+        # Filter candidates
         cand_d2 = cand_d[kept_idx]
         cand_m2 = cand_m[kept_idx]
         cand_power2 = cand_power[kept_idx]
@@ -453,10 +452,10 @@ def yolo_detection(y_echo, K, fc, f_scs, Ns, M, phi_start_deg=-60, phi_end_deg=6
         if cand_d2.size == 0:
             continue
 
-        # 对候选点按功率降序排序，并排除相邻子载波
+        # Sort candidate points by power in descending order, and exclude adjacent subcarriers
         sort_idx = np.argsort(-cand_power2)
         final_idx = []
-        sidelobe_exclude = 150  # 排除相邻子载波
+        sidelobe_exclude = 150  # Exclude adjacent subcarriers
 
         for i in sort_idx:
             current_m = cand_m2[i]
@@ -477,12 +476,12 @@ def yolo_detection(y_echo, K, fc, f_scs, Ns, M, phi_start_deg=-60, phi_end_deg=6
         cand_d_final = cand_d2[final_idx]
         cand_m_final = cand_m2[final_idx]
 
-        # 针对每个候选目标进行后续估计
+        # Perform subsequent estimation for each candidate target
         for candidate_idx in range(K_eff):
             if candidate_idx >= K:
                 break
 
-            # 5.1 角度估计
+            # 5.1 Angle estimation
             m_peak = cand_m_final[candidate_idx]
             fm_base = m_peak * f_scs
             term1 = ((BW - fm_base) * fc / BW / (fm_base + fc)) * np.sin(np.deg2rad(phi_start_deg))
@@ -491,14 +490,14 @@ def yolo_detection(y_echo, K, fc, f_scs, Ns, M, phi_start_deg=-60, phi_end_deg=6
             est_theta[idx, candidate_idx] = angle_value
             est_subcarriers[idx, candidate_idx] = m_peak
 
-            # 5.2 距离与速度估计
+            # 5.2 Distance and velocity estimation
             m_min_local = max(0, m_peak - sidelobe_window)
             m_max_local = min(M - 1, m_peak + sidelobe_window)
             sub_index = np.arange(m_min_local, m_max_local + 1)
             Y_RD_raw = Y_dynamic[:, sub_index]
             Y_RD = Y_RD_raw / (np.abs(Y_RD_raw) + 1e-10)
 
-            # (a) 速度方向 MUSIC 处理
+            # (a) Velocity direction MUSIC processing
             R_D = (Y_RD @ Y_RD.conj().T) / len(sub_index)
             eigvals_D, U_D = np.linalg.eig(R_D)
             idx_sort_D = np.argsort(-eigvals_D.real)
@@ -506,7 +505,7 @@ def yolo_detection(y_echo, K, fc, f_scs, Ns, M, phi_start_deg=-60, phi_end_deg=6
             rank_sig = K
             U_vD = U_D[:, rank_sig:]
 
-            # MUSIC 速度谱估计
+            # MUSIC velocity spectrum estimation
             F_v = np.zeros_like(v_search_range, dtype=float)
             for ii, v_cand in enumerate(v_search_range):
                 a_v = np.exp(1j * (4 * np.pi * fc * v_cand * Ts / c) * np.arange(Ns))
@@ -514,7 +513,7 @@ def yolo_detection(y_echo, K, fc, f_scs, Ns, M, phi_start_deg=-60, phi_end_deg=6
                 P_v = np.abs(a_v.conj().T @ (U_vD @ U_vD.conj().T) @ a_v)
                 F_v[ii] = 1 / (P_v + 1e-10)
 
-            # 局部峰值检测
+            # Local peak detection
             v_local_window = 15
             F_v_peaks = np.zeros_like(F_v)
             for ii in range(len(F_v)):
@@ -527,7 +526,7 @@ def yolo_detection(y_echo, K, fc, f_scs, Ns, M, phi_start_deg=-60, phi_end_deg=6
             v_est = v_search_range[max_idx_v]
             est_v[idx, candidate_idx] = v_est
 
-            # (b) 距离方向 MUSIC 处理
+            # (b) Distance direction MUSIC processing
             R_r = (Y_RD.T @ np.conj(Y_RD)) / Ns
             eigvals_R, U_R = np.linalg.eig(R_r)
             idx_sort_R = np.argsort(-eigvals_R.real)
@@ -543,7 +542,7 @@ def yolo_detection(y_echo, K, fc, f_scs, Ns, M, phi_start_deg=-60, phi_end_deg=6
             max_idx_r = np.argmax(F_r)
             est_r[idx, candidate_idx] = r_search_range[max_idx_r]
 
-    # 对各个估计结果按行排序
+    # Sort each estimation result by row
     sort_indices = np.argsort(est_theta, axis=1)
     est_subcarriers_sorted = np.zeros_like(est_subcarriers)
     for i in range(num_samp):

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import numpy as np
 from trajectory import generate_trajectory
 import math
@@ -12,27 +13,27 @@ f0 = 220e9
 
 def initial_rainbow_beam_ULA_YOLO(N, d, BW, f_scs, fm_list, phi_1, phi_M):
     """
-    按照MATLAB代码实现的彩虹波束参数计算
+    Rainbow beam parameter calculation implemented according to MATLAB code
 
     Args:
-        N: 天线数量
-        d: 天线间距
-        BW: 带宽
-        M: 子载波数量 (Derived from fm_list length)
-        fm_list: 子载波频率列表 [M+1]
-        phi_1: 最低频对应的phi角（单位：度）
-        phi_M: 最高频对应的phi角（单位：度）
+        N: Number of antennas
+        d: Antenna spacing
+        BW: Bandwidth
+        M: Number of subcarriers (Derived from fm_list length)
+        fm_list: Subcarrier frequency list [M+1]
+        phi_1: Phi angle corresponding to the lowest frequency (unit: degrees)
+        phi_M: Phi angle corresponding to the highest frequency (unit: degrees)
 
     Returns:
-        TTD: 时间延迟补偿 [N] (ns)
-        PS: 相位补偿 [N] (rad)
+        TTD: Time delay compensation [N] (ns)
+        PS: Phase compensation [N] (rad)
     """
     c = 3e8
 
-    # 按generate.py的计算逻辑
+    # Calculation logic according to generate.py
     antenna_idx = (np.arange(N) - (N - 1) / 2)
 
-    # 计算初始PS和TTD
+    # Calculate initial PS and TTD
     PS_val = -fm_list[0] * antenna_idx * d * np.sin(np.deg2rad(phi_1)) / c
     TTD_val = -PS_val / BW - ((fm_list[0] + BW) * antenna_idx * d * np.sin(np.deg2rad(phi_M))) / (BW * c)
 
@@ -69,7 +70,7 @@ def compute_echo_from_factors_optimized(
     device = chan_factor.device if isinstance(chan_factor, torch.Tensor) else torch.device('cpu')
     dtype = torch.complex64
 
-    # 保证在同一设备
+    # Ensure all tensors are on the same device
     chan_factor = chan_factor.to(device=device, dtype=dtype)
     a_vectors = a_vectors.to(device=device, dtype=dtype)
     fm = fm_list.to(device=device, dtype=torch.float32)          # [M]
@@ -79,11 +80,11 @@ def compute_echo_from_factors_optimized(
     TTD_R = TTD_R.to(device=device, dtype=torch.float32)
 
 
-    f0 = fm[0]                       # 基准频率
+    f0 = fm[0]                       # Reference frequency
     freq_diff = fm - f0              # [M]
     scale = 1e9
 
-    # 1) 先构造 phase_t 和 phase_r: 形状 [B, M, Nt]
+    # 1) First construct phase_t and phase_r: shape [B, M, Nt]
     #    phase_t[b,m,n] = -PS_T[b,n] - 2π * TTD_T[b,n] * freq_diff[m]/scale
     # Unsqueeze PS/TTD for broadcasting with freq_diff
     PS_T_exp = PS_T.unsqueeze(1) # [B, 1, Nt]
@@ -96,14 +97,14 @@ def compute_echo_from_factors_optimized(
     phase_r = - PS_R_exp - 2 * np.pi * (freq_diff_exp * TTD_R_exp) / scale # [B, M, Nt]
 
 
-    # 2) 计算 BF_t_all, BF_r_all: 形状 [B, M, Nt]
+    # 2) Calculate BF_t_all, BF_r_all: shape [B, M, Nt]
     BF_t_all = torch.exp(1j * phase_t).to(dtype)  # [B,M,Nt]
     BF_r_all = torch.exp(1j * phase_r).to(dtype)
 
-    # 3) 初始化 echo
+    # 3) Initialize echo
     echo = torch.zeros((B, Ns, M), dtype=dtype, device=device)
 
-    # 4) 对每个子载波循环
+    # 4) Loop over each subcarrier
     # --- Vectorized echo calculation across subcarriers ---
     # Reshape BF vectors for broadcasting: [B, 1, M, 1, Nt]
     bf_t_exp = BF_t_all.unsqueeze(1).unsqueeze(3)
@@ -114,15 +115,15 @@ def compute_echo_from_factors_optimized(
     h_exp = chan_factor.unsqueeze(-1)
     # a_vectors: [B, Ns, M, K, Nt]
 
-    # 发射端贡献: conj(a) * bf_t -> sum over Nt -> [B, Ns, M, K]
+    # Transmit contribution: conj(a) * bf_t -> sum over Nt -> [B, Ns, M, K]
     # Element-wise product: a_vectors.conj() * bf_t_exp results in [B, Ns, M, K, Nt]
     tx = torch.sum(a_vectors.conj() * bf_t_exp, dim=-1) # Sum over Nt -> [B, Ns, M, K]
 
-    # 接收端贡献: conj(bf_r) * a -> sum over Nt -> [B, Ns, M, K]
+    # Receive contribution: conj(bf_r) * a -> sum over Nt -> [B, Ns, M, K]
     # Element-wise product: bf_r_exp.conj() * a_vectors results in [B, Ns, M, K, Nt]
     rx = torch.sum(bf_r_exp.conj() * a_vectors, dim=-1) # Sum over Nt -> [B, Ns, M, K]
 
-    # 整体 echo: sum over K -> [B, Ns, M]
+    # Overall echo: sum over K -> [B, Ns, M]
     # Element-wise product: h_exp.squeeze(-1) * tx * rx results in [B, Ns, M, K]
     echo = torch.sum(h_exp.squeeze(-1) * tx * rx, dim=-1) # Sum over K -> [B, Ns, M]
 
@@ -506,10 +507,10 @@ def main(sample_num=5000, chunk_size=500, experiment_name='moving_target_v2logic
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate moving target data (V2 Logic, VECTORIZED Chunked Saving + m_peak + Echo)') # Updated description
-    parser.add_argument('--samples', type=int, default=50000, help='样本数量')
-    parser.add_argument('--chunk', type=int, default=500, help='每个 chunk 文件保存的样本数 (Reduced default for testing echo gen)') # Adjusted default
-    parser.add_argument('--name', type=str, default='moving_target_v2logic_chunked_vectorized_echo', help='实验名称') # Updated default name
-    parser.add_argument('--random', type=int, default=0, choices=[0, 1], help='轨迹生成模式（0：确保角度差，1：完全随机）')
+    parser.add_argument('--samples', type=int, default=50000, help='Number of samples')
+    parser.add_argument('--chunk', type=int, default=500, help='Number of samples saved per chunk file (Reduced default for testing echo gen)') # Adjusted default
+    parser.add_argument('--name', type=str, default='moving_target_v2logic_chunked_vectorized_echo', help='Experiment name') # Updated default name
+    parser.add_argument('--random', type=int, default=0, choices=[0, 1], help='Trajectory generation mode (0: ensure angle difference, 1: completely random)')
     args = parser.parse_args()
 
     print(f"--- Running with Samples={args.samples}, Chunk Size={args.chunk} ---")
@@ -518,4 +519,4 @@ if __name__ == "__main__":
                            chunk_size=args.chunk,
                            experiment_name=args.name,
                            random_trajectory_flag=args.random)
-    print(f"\n数据集生成完成，路径: {experiment_path}")
+    print(f"\nDataset generation completed, path: {experiment_path}")

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*- # 添加编码声明
+# -*- coding: utf-8 -*- # Add encoding declaration
 import matplotlib.pyplot as plt
 import os
 import numpy as np
@@ -18,30 +18,30 @@ import traceback
 from typing import List, Dict, Tuple, Any 
 from functions import load_system_params
 
-# --- 常量 ---
+# --- Constants ---
 K_BOLTZMANN = 1.38e-23
 T_NOISE_KELVIN = 290 # Standard noise temperature
 
 
 
 
-# --- 定义自定义数据集类 (读取 echo 和 m_peak) ---
+# --- Define custom dataset class (read echo and m_peak) ---
 class ChunkedEchoDataset(Dataset):
     """
-    从分块保存的 .npy 文件加载预先计算的 *无噪声* 回波信号 (yecho)
-    和目标峰值 (m_peak)。
+    Load pre-computed *noiseless* echo signals (yecho) from chunked .npy files
+    and target peaks (m_peak).
     """
     # expected_k now directly controlled by args.max_targets
     def __init__(self, data_root, start_idx, end_idx, expected_k):
         """
-        初始化数据集。
+        Initialize dataset.
 
         Args:
-            data_root (str): 包含 echoes 子目录和 trajectory_data.npz,
-                             system_params.npz 的根目录。
-            start_idx (int): 此数据集分片的起始绝对索引。
-            end_idx (int): 此数据集分片的结束绝对索引。
-            expected_k (int): 期望的最大目标数 K (用于 m_peak 填充/截断)。
+            data_root (str): Root directory containing echoes subdirectory and trajectory_data.npz,
+                             system_params.npz.
+            start_idx (int): Starting absolute index for this dataset slice.
+            end_idx (int): Ending absolute index for this dataset slice.
+            expected_k (int): Expected maximum number of targets K (for m_peak padding/truncation).
         """
         super().__init__()
         self.data_root = data_root
@@ -50,78 +50,78 @@ class ChunkedEchoDataset(Dataset):
         self.num_samples = end_idx - start_idx + 1
         self.expected_k = expected_k # Now set by args.max_targets
 
-        print(f"  数据集初始化: 根目录='{data_root}', 范围=[{start_idx}, {end_idx}], 数量={self.num_samples}, 预期K={self.expected_k}") # Added expected_k here
+        print(f"  Dataset initialization: root='{data_root}', range=[{start_idx}, {end_idx}], count={self.num_samples}, expected_K={self.expected_k}") # Added expected_k here
 
         self.echoes_dir = os.path.join(data_root, 'echoes')
         if not os.path.isdir(self.echoes_dir):
-            raise FileNotFoundError(f"Echoes 目录未找到: {self.echoes_dir}")
+            raise FileNotFoundError(f"Echoes directory not found: {self.echoes_dir}")
 
         params_path = os.path.join(data_root, 'system_params.npz')
         if not os.path.isfile(params_path):
-            raise FileNotFoundError(f"系统参数文件未找到: {params_path}")
+            raise FileNotFoundError(f"System parameters file not found: {params_path}")
         try:
             params_data = np.load(params_path)
             if 'samples_per_chunk' not in params_data:
                 if 'chunk_size' in params_data: self.chunk_size = int(params_data['chunk_size'])
-                else: raise KeyError("在 system_params.npz 中未找到 'samples_per_chunk' 或 'chunk_size'。")
+                else: raise KeyError("'samples_per_chunk' or 'chunk_size' not found in system_params.npz.")
             else: self.chunk_size = int(params_data['samples_per_chunk'])
             self.M_plus_1 = int(params_data['M']) + 1 if 'M' in params_data else None
             self.Ns = int(params_data['Ns']) if 'Ns' in params_data else None
-            print(f"  从参数加载 chunk_size: {self.chunk_size}")
-            if self.M_plus_1: print(f"  从参数加载 M+1: {self.M_plus_1}")
-            if self.Ns: print(f"  从参数加载 Ns: {self.Ns}")
-        except Exception as e: raise IOError(f"加载或解析 system_params.npz 时出错: {e}")
-        if self.chunk_size <= 0: raise ValueError("samples_per_chunk 必须为正数。")
+            print(f"  Loaded chunk_size from params: {self.chunk_size}")
+            if self.M_plus_1: print(f"  Loaded M+1 from params: {self.M_plus_1}")
+            if self.Ns: print(f"  Loaded Ns from params: {self.Ns}")
+        except Exception as e: raise IOError(f"Error loading or parsing system_params.npz: {e}")
+        if self.chunk_size <= 0: raise ValueError("samples_per_chunk must be positive.")
 
         traj_path = os.path.join(data_root, 'trajectory_data.npz')
-        if not os.path.isfile(traj_path): raise FileNotFoundError(f"轨迹数据文件未找到: {traj_path}")
+        if not os.path.isfile(traj_path): raise FileNotFoundError(f"Trajectory data file not found: {traj_path}")
         try:
             traj_data = np.load(traj_path)
             if 'm_peak_indices' not in traj_data:
                 if 'm_peak' in traj_data: m_peak_all = traj_data['m_peak']
-                else: raise KeyError("在 trajectory_data.npz 中未找到 'm_peak_indices' 或 'm_peak'")
+                else: raise KeyError("'m_peak_indices' or 'm_peak' not found in trajectory_data.npz")
             else: m_peak_all = traj_data['m_peak_indices']
             total_samples_in_file = m_peak_all.shape[0]
             if self.end_idx >= total_samples_in_file:
-                print(f"警告：请求的 end_idx ({self.end_idx}) 超出 trajectory_data.npz 中的可用样本 ({total_samples_in_file})。")
+                print(f"Warning: Requested end_idx ({self.end_idx}) exceeds available samples in trajectory_data.npz ({total_samples_in_file}).")
                 self.end_idx = total_samples_in_file - 1; self.num_samples = self.end_idx - self.start_idx + 1
-                if self.num_samples <= 0: raise ValueError(f"调整后的样本范围无效 [{self.start_idx}, {self.end_idx}]")
-                print(f"  调整后的数据集范围: [{self.start_idx}, {self.end_idx}], 数量={self.num_samples}")
+                if self.num_samples <= 0: raise ValueError(f"Invalid adjusted sample range [{self.start_idx}, {self.end_idx}]")
+                print(f"  Adjusted dataset range: [{self.start_idx}, {self.end_idx}], count={self.num_samples}")
             self.m_peak_targets = m_peak_all[self.start_idx : self.end_idx + 1]
-            print(f"  已加载 m_peak_targets，原始形状: {self.m_peak_targets.shape}")
+            print(f"  Loaded m_peak_targets, original shape: {self.m_peak_targets.shape}")
 
             # --- Adjust loaded targets based on expected_k ---
             actual_k_in_data = self.m_peak_targets.shape[1] if self.m_peak_targets.ndim > 1 else 1
             if actual_k_in_data < self.expected_k:
-                print(f"  信息: m_peak_targets K维度 ({actual_k_in_data}) 小于 expected_k ({self.expected_k})。将进行填充。")
+                print(f"  Info: m_peak_targets K dimension ({actual_k_in_data}) is less than expected_k ({self.expected_k}). Will pad.")
                 pad_width = self.expected_k - actual_k_in_data
                 # Pad with -1 (invalid index)
                 self.m_peak_targets = np.pad(self.m_peak_targets, ((0, 0), (0, pad_width)), 'constant', constant_values=-1)
-                print(f"  填充后的 m_peak_targets 形状: {self.m_peak_targets.shape}")
+                print(f"  Padded m_peak_targets shape: {self.m_peak_targets.shape}")
             elif actual_k_in_data > self.expected_k:
-                 print(f"  警告: m_peak_targets K维度 ({actual_k_in_data}) 大于 expected_k ({self.expected_k})。将截断。")
+                 print(f"  Warning: m_peak_targets K dimension ({actual_k_in_data}) is greater than expected_k ({self.expected_k}). Will truncate.")
                  self.m_peak_targets = self.m_peak_targets[:, :self.expected_k]
-                 print(f"  截断后的 m_peak_targets 形状: {self.m_peak_targets.shape}")
+                 print(f"  Truncated m_peak_targets shape: {self.m_peak_targets.shape}")
             # ---
 
-        except Exception as e: raise IOError(f"加载或处理 trajectory_data.npz 时出错: {e}")
+        except Exception as e: raise IOError(f"Error loading or processing trajectory_data.npz: {e}")
 
     def __len__(self):
         return self.num_samples
 
     def __getitem__(self, index):
-        if index < 0 or index >= self.num_samples: raise IndexError(f"索引 {index} 超出范围 [0, {self.num_samples - 1}]")
+        if index < 0 or index >= self.num_samples: raise IndexError(f"Index {index} out of range [0, {self.num_samples - 1}]")
         try:
             absolute_idx = self.start_idx + index
             chunk_idx = absolute_idx // self.chunk_size
             index_in_chunk = absolute_idx % self.chunk_size
             echo_file_path = os.path.join(self.echoes_dir, f'echo_chunk_{chunk_idx}.npy')
-            if not os.path.isfile(echo_file_path): raise FileNotFoundError(f"Echo 数据文件未找到: {echo_file_path} (请求 chunk {chunk_idx})")
+            if not os.path.isfile(echo_file_path): raise FileNotFoundError(f"Echo data file not found: {echo_file_path} (requested chunk {chunk_idx})")
             echo_chunk = np.load(echo_file_path)
             # Check dimensions if M_plus_1 and Ns are known
             if self.Ns and self.M_plus_1 and echo_chunk.ndim >= 3 and echo_chunk.shape[1:] != (self.Ns, self.M_plus_1):
-                print(f"警告 (idx={absolute_idx}, chunk={chunk_idx}): echo_chunk 形状 {echo_chunk.shape} 与预期 ({(-1, self.Ns, self.M_plus_1)}) 不符")
-            if index_in_chunk >= echo_chunk.shape[0]: raise IndexError(f"索引 {index_in_chunk} 超出加载的块大小 ({echo_chunk.shape[0]}) 对于文件 echo_chunk_{chunk_idx}.npy (绝对索引 {absolute_idx})")
+                print(f"Warning (idx={absolute_idx}, chunk={chunk_idx}): echo_chunk shape {echo_chunk.shape} does not match expected ({(-1, self.Ns, self.M_plus_1)})")
+            if index_in_chunk >= echo_chunk.shape[0]: raise IndexError(f"Index {index_in_chunk} exceeds loaded chunk size ({echo_chunk.shape[0]}) for file echo_chunk_{chunk_idx}.npy (absolute index {absolute_idx})")
 
             clean_echo_signal = echo_chunk[index_in_chunk]
             m_peak = self.m_peak_targets[index] # Already adjusted to expected_k
@@ -133,11 +133,11 @@ class ChunkedEchoDataset(Dataset):
 
             sample = {'echo': echo_tensor, 'm_peak': m_peak_tensor}
             return sample
-        except FileNotFoundError as e: print(f"错误：加载索引 {index} (绝对 {self.start_idx + index}) 时文件未找到: {e}", flush=True); raise
-        except IndexError as e: print(f"错误：加载索引 {index} (绝对 {self.start_idx + index}) 时索引超出范围: {e}", flush=True); raise
-        except Exception as e: print(f"错误：加载索引 {index} (绝对 {self.start_idx + index}) 时发生意外错误: {e}", flush=True); traceback.print_exc(); raise
+        except FileNotFoundError as e: print(f"Error: File not found when loading index {index} (absolute {self.start_idx + index}): {e}", flush=True); raise
+        except IndexError as e: print(f"Error: Index out of range when loading index {index} (absolute {self.start_idx + index}): {e}", flush=True); raise
+        except Exception as e: print(f"Error: Unexpected error when loading index {index} (absolute {self.start_idx + index}): {e}", flush=True); traceback.print_exc(); raise
 
-# --- 模型定义 ---
+# --- Model definition ---
 
 # --- CNN Model (IndexPredictionCNN) ---
 class IndexPredictionCNN(nn.Module):
@@ -223,40 +223,42 @@ class IndexPredictionCNN(nn.Module):
 
         return logits, Y_magnitude_log # Return logits and the processed input for visualization
 
-# --- 辅助函数定义 ---
+# --- Helper functions ---
 
 # --- Gaussian Target Generation ---
 def create_gaussian_target(peak_indices, M_plus_1, sigma, device):
-    if isinstance(peak_indices, (list, np.ndarray)):
-        peak_indices = torch.tensor(peak_indices, device=device, dtype=torch.long)
-    elif isinstance(peak_indices, torch.Tensor):
-        peak_indices = peak_indices.to(device=device, dtype=torch.long)
-    else:
-        raise TypeError(f"peak_indices type {type(peak_indices)} not supported.")
-
-    # Filter out invalid indices (like -1 padding) before processing
-    valid_mask = (peak_indices >= 0) & (peak_indices < M_plus_1)
-    valid_peaks = peak_indices[valid_mask]
-
-    # If no valid peaks remain after filtering, return zeros
+    """
+    Create a Gaussian smooth target distribution based on peak indices.
+    
+    Args:
+        peak_indices (torch.Tensor): Peak indices of shape (K,), 
+                                   where -1 indicates no peak (placeholder).
+        M_plus_1 (int): Total number of frequency bins.
+        sigma (float): Standard deviation for Gaussian distribution.
+        device: Target device for the tensor.
+    
+    Returns:
+        torch.Tensor: Smooth target distribution of shape (M_plus_1,).
+    """
+    # Filter out invalid peak indices (< 0 or >= M_plus_1)
+    valid_peaks = peak_indices[(peak_indices >= 0) & (peak_indices < M_plus_1)]
+    
     if valid_peaks.numel() == 0:
-        return torch.zeros(M_plus_1, device=device, dtype=torch.float32)
-
-    # Proceed with Gaussian generation only for valid peaks
-    valid_peaks = valid_peaks.float() # Ensure float for calculations
-    idx = torch.arange(M_plus_1, device=device, dtype=torch.float32)
-    idx_expanded = idx.unsqueeze(1) # (M+1, 1)
-    peaks_expanded = valid_peaks.unsqueeze(0) # (1, num_valid_peaks)
-    sigma_safe = max(float(sigma), 1e-6) # Prevent division by zero
-
-    # Calculate Gaussian bumps for all valid peaks simultaneously
-    gaussians = torch.exp(-0.5 * ((idx_expanded - peaks_expanded) / sigma_safe)**2) # (M+1, num_valid_peaks)
-
-    # Sum the Gaussians and clamp
-    target_smooth = torch.sum(gaussians, dim=1) # (M+1,)
-    target_smooth = torch.clamp(target_smooth, max=1.0) # Ensure max value is 1.0
-
-    return target_smooth
+        # No valid peaks, return zeros
+        return torch.zeros(M_plus_1, dtype=torch.float32, device=device)
+    
+    # Create position grid
+    positions = torch.arange(M_plus_1, dtype=torch.float32, device=device).unsqueeze(1)
+    
+    # Calculate Gaussian for each valid peak and sum them
+    valid_peaks_expanded = valid_peaks.unsqueeze(0).float()
+    gaussian_sum = torch.sum(torch.exp(-0.5 * ((positions - valid_peaks_expanded) / sigma) ** 2), dim=1)
+    
+    # Normalize to make it a probability distribution
+    if gaussian_sum.sum() > 0:
+        gaussian_sum = gaussian_sum / gaussian_sum.sum()
+    
+    return gaussian_sum
 
 
 # --- Simplified Combined Loss (Only Main Loss) --- 
@@ -315,7 +317,7 @@ class CombinedLoss(nn.Module):
         return main_loss
 
 
-# --- 其他辅助函数 ---
+# --- Other helper functions ---
 def get_latest_experiment_path():
     """Tries to find the latest experiment path from standard locations."""
     try:
@@ -368,7 +370,7 @@ def count_parameters(model):
     """Counts the number of trainable parameters in a PyTorch model."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-# --- 指标计算函数 ---
+# --- Metric calculation functions ---
 
 # <<< Top-K Accuracy Calculation Function >>> (Handles padding in true_peak_indices_batch)
 def calculate_accuracy_topk(pred_probs, true_peak_indices_batch, k, tolerance):
@@ -434,7 +436,7 @@ def calculate_accuracy_topk(pred_probs, true_peak_indices_batch, k, tolerance):
     return accuracy
 
 
-# --- 可视化函数 ---
+# --- Visualization functions ---
 def visualize_predictions(pred_probs_list, target_list, folders, timestamp, M_plus_1,
                           acc_threshold=0.5, acc_tolerance=3, # Tolerance not used here
                           is_target_distribution=False, num_samples=4):
@@ -470,7 +472,7 @@ def visualize_predictions(pred_probs_list, target_list, folders, timestamp, M_pl
     plt.close(fig)
 
 
-# --- 测试函数 ---
+# --- Test function ---
 def test_model(model: nn.Module,
                test_loader: DataLoader,
                device: torch.device,
@@ -607,47 +609,47 @@ def test_model(model: nn.Module,
     return results_per_pt, all_pred_probs_list_viz, all_target_smooth_list_viz
 
 
-# --- 主执行函数 ---
+# --- Main execution function ---
 def main():
-    # --- 参数解析 ---
-    parser = argparse.ArgumentParser(description='训练峰值索引预测模型 (CNN - 使用随机发射功率训练)')
+    # --- Parameter Parsing ---
+    parser = argparse.ArgumentParser(description='Train peak index prediction model (CNN - using random transmit power training)')
     # --- Training Hyperparameters ---
-    parser.add_argument('--epochs', type=int, default=60, help="训练的总轮数")
-    parser.add_argument('--batch_size', type=int, default=100, help="批处理大小")
-    parser.add_argument('--lr', type=float, default=1e-4, help='模型 (CNN) 的学习率')
-    parser.add_argument('--weight_decay', type=float, default=1e-5, help='模型 (CNN) 的权重衰减')
-    parser.add_argument('--clip_grad_norm', type=float, default=5.0, help='模型 (CNN) 的梯度裁剪范数上限')
-    parser.add_argument('--patience', type=int, default=7, help='早停轮数 (基于最低验证功率点的损失)')
+    parser.add_argument('--epochs', type=int, default=60, help="Total number of training epochs")
+    parser.add_argument('--batch_size', type=int, default=100, help="Batch size")
+    parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate for model (CNN)')
+    parser.add_argument('--weight_decay', type=float, default=1e-5, help='Weight decay for model (CNN)')
+    parser.add_argument('--clip_grad_norm', type=float, default=5.0, help='Gradient clipping norm upper limit for model (CNN)')
+    parser.add_argument('--patience', type=int, default=7, help='Early stopping patience (based on loss from lowest validation power)')
     # --- System/Data Parameters ---
-    parser.add_argument('--data_dir', type=str, default=None, help='包含 echoes/ 和 *.npz 文件的数据根目录路径')
-    parser.add_argument('--min_pt_dbm', type=float, default=-10.0, help='训练期间使用的最小发射功率 (dBm)')
-    parser.add_argument('--max_pt_dbm', type=float, default=30.0, help='训练期间使用的最大发射功率 (dBm)')
+    parser.add_argument('--data_dir', type=str, default=None, help='Data root directory path containing echoes/ and *.npz files')
+    parser.add_argument('--min_pt_dbm', type=float, default=-10.0, help='Minimum transmit power used during training (dBm)')
+    parser.add_argument('--max_pt_dbm', type=float, default=30.0, help='Maximum transmit power used during training (dBm)')
 
-    parser.add_argument('--power_sampling', type=str, default='linear', choices=['linear', 'dbm'], help='训练时发射功率的采样方式 (linear: 在mW上均匀采样, dbm: 在dBm上均匀采样)')
+    parser.add_argument('--power_sampling', type=str, default='linear', choices=['linear', 'dbm'], help='Transmit power sampling method during training (linear: uniform sampling on mW, dbm: uniform sampling on dBm)')
 
-    parser.add_argument('--val_pt_dbm_list', type=str, default="-10,0,10", help='用于验证和测试的固定发射功率 (dBm) 列表，以逗号分隔')
+    parser.add_argument('--val_pt_dbm_list', type=str, default="-10,0,10", help='Comma-separated list of fixed transmit powers (dBm) for validation and testing')
     # ---
 
-    parser.add_argument('--max_targets', type=int, default=4, help='数据集中预期的最大目标/用户数量 (K_max)')
+    parser.add_argument('--max_targets', type=int, default=4, help='Expected maximum number of targets/users in the dataset (K_max)')
     # ---
     # --- Model Hyperparameters ---
-    parser.add_argument('--hidden_dim', type=int, default=512, help='CNN 预测头中的隐藏维度')
-    parser.add_argument('--dropout', type=float, default=0.1, help='CNN 中的 Dropout 比率')
+    parser.add_argument('--hidden_dim', type=int, default=512, help='Hidden dimension in CNN prediction head')
+    parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate in CNN')
     # --- Loss/Accuracy Parameters ---
-    parser.add_argument('--loss_type', type=str, default='bce', choices=['bce', 'kldiv'], help='主损失函数类型')
-    parser.add_argument('--loss_sigma', type=float, default=1.0, help='高斯平滑目标的标准差 (BCE时用于目标生成)')
+    parser.add_argument('--loss_type', type=str, default='bce', choices=['bce', 'kldiv'], help='Main loss function type')
+    parser.add_argument('--loss_sigma', type=float, default=1.0, help='Standard deviation for Gaussian smooth target (used for target generation in BCE)')
 
-    parser.add_argument('--top_k', type=int, default=4, help='计算准确率时使用的Top-K预测数量 (建议设置为 --max_targets 的值)')
+    parser.add_argument('--top_k', type=int, default=4, help='Number of Top-K predictions for accuracy calculation (recommended to set to --max_targets value)')
     # ---
-    parser.add_argument('--accuracy_threshold', type=float, default=0.5, help='[仅用于可视化] 标记预测峰值的概率阈值')
-    parser.add_argument('--accuracy_tolerance', type=int, default=3, help='计算Top-K准确率(命中率)时的容忍度（子载波数量）')
+    parser.add_argument('--accuracy_threshold', type=float, default=0.5, help='[For visualization only] Probability threshold for marking predicted peaks')
+    parser.add_argument('--accuracy_tolerance', type=int, default=3, help='Tolerance (number of subcarriers) when calculating Top-K accuracy (hit rate)')
     # --- Execution Control ---
-    parser.add_argument('--num_workers', type=int, default=4, help='数据加载器使用的工作进程数')
-    parser.add_argument('--cuda_device', type=int, default=0, help="要使用的 CUDA 设备 ID (若可用)")
-    parser.add_argument('--test_only', action='store_true', help='仅在加载的模型上运行测试')
-    parser.add_argument('--load_model', action='store_true', help='尝试加载最佳模型 (若存在于 model_dir 或指定路径)')
-    parser.add_argument('--load_model_path', type=str, default=None, help='指定加载 CNN 模型权重的 .pt 文件路径')
-    parser.add_argument('--model_dir', type=str, default=None, help='包含 best_model*.pt 的目录路径 (用于加载/查找模型)')
+    parser.add_argument('--num_workers', type=int, default=4, help='Number of worker processes for data loader')
+    parser.add_argument('--cuda_device', type=int, default=0, help="CUDA device ID to use (if available)")
+    parser.add_argument('--test_only', action='store_true', help='Only run testing on loaded model')
+    parser.add_argument('--load_model', action='store_true', help='Try to load best model (if exists in model_dir or specified path)')
+    parser.add_argument('--load_model_path', type=str, default=None, help='Specify path to .pt file for loading CNN model weights')
+    parser.add_argument('--model_dir', type=str, default=None, help='Directory path containing best_model*.pt (for loading/finding model)')
 
 
     args = parser.parse_args()
@@ -655,18 +657,18 @@ def main():
     # --- Parse val_pt_dbm_list ---
     try:
         args.val_pt_dbm_list = sorted([float(p.strip()) for p in args.val_pt_dbm_list.split(',')])
-        if not args.val_pt_dbm_list: raise ValueError("验证功率列表不能为空")
+        if not args.val_pt_dbm_list: raise ValueError("Validation power list cannot be empty")
     except Exception as e:
-        print(f"错误：解析 --val_pt_dbm_list '{args.val_pt_dbm_list}' 失败: {e}", flush=True)
+        print(f"Error: Failed to parse --val_pt_dbm_list '{args.val_pt_dbm_list}': {e}", flush=True)
         return
-    print(f"用于验证/测试的功率点 (dBm): {args.val_pt_dbm_list}")
+    print(f"Power points for validation/testing (dBm): {args.val_pt_dbm_list}")
     # Determine the critical power level for early stopping (lowest one)
     critical_val_pt_dbm = min(args.val_pt_dbm_list)
-    print(f"早停将基于最低验证功率点的损失: {critical_val_pt_dbm:.1f} dBm")
+    print(f"Early stopping will be based on validation loss at lowest power point: {critical_val_pt_dbm:.1f} dBm")
 
     # --- Sanity check/recommendation for top_k ---
     if args.top_k != args.max_targets:
-        print(f"警告: --top_k ({args.top_k}) 与 --max_targets ({args.max_targets}) 不同。评估指标将基于 Top-{args.top_k}。", flush=True)
+        print(f"Warning: --top_k ({args.top_k}) differs from --max_targets ({args.max_targets}). Evaluation metrics will be based on Top-{args.top_k}.", flush=True)
 
 
     # --- Setup Device, Paths, Folders ---
@@ -676,20 +678,20 @@ def main():
                  device = torch.device(f"cuda:{args.cuda_device}")
                  torch.cuda.set_device(device)
             else:
-                 print(f"警告: CUDA 设备 {args.cuda_device} 无效 (只有 {torch.cuda.device_count()} 个设备)。使用 CPU。", flush=True)
+                 print(f"Warning: CUDA device {args.cuda_device} is invalid (only {torch.cuda.device_count()} devices available). Using CPU.", flush=True)
                  device = torch.device("cpu")
         except Exception as e:
-            print(f"设置 CUDA 设备时出错: {e}。使用 CPU。", flush=True)
+            print(f"Error setting up CUDA device: {e}. Using CPU.", flush=True)
             device = torch.device("cpu")
     else:
         device = torch.device("cpu")
-        print("CUDA 不可用或未请求。使用 CPU。", flush=True)
-    print(f"使用设备: {device}", flush=True)
+        print("CUDA not available or not requested. Using CPU.", flush=True)
+    print(f"Using device: {device}", flush=True)
     set_matplotlib_english()
 
     try: data_root = args.data_dir if args.data_dir else get_latest_experiment_path()
-    except Exception: print("错误：未指定数据目录 (--data_dir) 且无法读取 latest_experiment.txt。请提供数据源。", flush=True); return
-    print(f"使用数据根目录: {data_root}", flush=True)
+    except Exception: print("Error: No data directory specified (--data_dir) and cannot read latest_experiment.txt. Please provide data source.", flush=True); return
+    print(f"Using data root directory: {data_root}", flush=True)
     # --- Modified folder creation ---
     folders, timestamp = create_timestamp_folders(data_root) # Template name created
     # --- Finalize output folder name based on sampling type ---
@@ -718,29 +720,29 @@ def main():
         elif 'f_scs' in params_data and 'M' in params_data:
              BW = float(params_data['f_scs']) * int(params_data['M'])
         else:
-             raise KeyError("在 system_params.npz 中未找到 'BW' 或 'f_scs'/'M' 以计算带宽。")
+             raise KeyError("'BW' or 'f_scs'/'M' not found in system_params.npz to calculate bandwidth.")
         if M is None or Ns is None or BW is None: raise KeyError("Missing M, Ns, or BW")
-    except Exception as e: print(f"加载 system_params.npz 时出错: {e}", flush=True); return
+    except Exception as e: print(f"Error loading system_params.npz: {e}", flush=True); return
     M_plus_1 = M + 1
 
-    print(f"系统参数: M={M}, Ns={Ns}, BW={BW:.2e}", flush=True)
+    print(f"System parameters: M={M}, Ns={Ns}, BW={BW:.2e}", flush=True)
     # --- Print K from params vs args.max_targets ---
-    print(f"命令行预期最大目标数 (args.max_targets): {args.max_targets}")
+    print(f"Command line expected maximum targets (args.max_targets): {args.max_targets}")
     if K_data_param is not None:
-        print(f"数据参数文件中的 K 值 (system_params.npz['K']): {K_data_param}")
+        print(f"K value in data params file (system_params.npz['K']): {K_data_param}")
         if K_data_param != args.max_targets:
-            print(f"  注意: system_params.npz 中的 K ({K_data_param}) 与 args.max_targets ({args.max_targets}) 不同。将使用 args.max_targets ({args.max_targets}) 来处理数据集标签。")
+            print(f"  Note: K in system_params.npz ({K_data_param}) differs from args.max_targets ({args.max_targets}). Will use args.max_targets ({args.max_targets}) for dataset label processing.")
     else:
-        print("数据参数文件中未指定 K 值。")
+        print("K value not specified in data params file.")
     # ---
-    print(f"准确率指标: Top-{args.top_k} 命中率 @ 容差={args.accuracy_tolerance}")
+    print(f"Accuracy metrics: Top-{args.top_k} hit rate @ tolerance={args.accuracy_tolerance}")
 
 
     # --- Calculate noise standard deviation (independent of Pt) ---
     noise_power_total_linear = K_BOLTZMANN * T_NOISE_KELVIN * BW
     noise_variance_per_component = noise_power_total_linear / 2.0; noise_std_dev = math.sqrt(noise_variance_per_component)
     noise_std_dev_tensor = torch.tensor(noise_std_dev, dtype=torch.float32)
-    print(f"噪声标准差 (实/虚): {noise_std_dev:.3e}")
+    print(f"Noise standard deviation (real/imag): {noise_std_dev:.3e}")
 
     # --- Calculate reference scaling factors for VALIDATION/TESTING using args.val_pt_dbm_list ---
     min_val_pt_dbm = min(args.val_pt_dbm_list)
@@ -750,13 +752,13 @@ def main():
     min_val_scaling_factor = math.sqrt(min_val_pt_linear_mw)
     max_val_scaling_factor = math.sqrt(max_val_pt_linear_mw)
 
-    print(f"训练功率范围: [{args.min_pt_dbm:.1f}, {args.max_pt_dbm:.1f}] dBm (采样方式: {args.power_sampling})")
-    print(f"验证/测试固定功率点 (dBm): {args.val_pt_dbm_list}")
-    print(f"  (对应缩放因子范围: [{min_val_scaling_factor:.3f}, {max_val_scaling_factor:.3f}])")
+    print(f"Training power range: [{args.min_pt_dbm:.1f}, {args.max_pt_dbm:.1f}] dBm (sampling method: {args.power_sampling})")
+    print(f"Validation/testing fixed power points (dBm): {args.val_pt_dbm_list}")
+    print(f"  (Corresponding scaling factor range: [{min_val_scaling_factor:.3f}, {max_val_scaling_factor:.3f}])")
 
 
     # --- Datasets and Dataloaders ---
-    print("设置数据集和数据加载器...", flush=True)
+    print("Setting up datasets and data loaders...", flush=True)
     try:
         traj_path_check = os.path.join(data_root, 'trajectory_data.npz')
         traj_data_check = np.load(traj_path_check)
@@ -764,18 +766,18 @@ def main():
         num_total_data_available = traj_data_check[key_to_check].shape[0]
         # Get actual K dimension from loaded data if possible
         actual_K_dim_data = traj_data_check[key_to_check].shape[1] if traj_data_check[key_to_check].ndim > 1 else 1
-        print(f"  在 trajectory_data.npz 中检测到 {num_total_data_available} 个总样本, K维度={actual_K_dim_data}。")
+        print(f"  Detected {num_total_data_available} total samples in trajectory_data.npz, K dimension={actual_K_dim_data}.")
     except Exception as e:
-        print(f"警告：无法从 trajectory_data.npz 确定总样本数或K维度 ({e})。使用默认值 50000 进行分割。")
+        print(f"Warning: Cannot determine total sample count or K dimension from trajectory_data.npz ({e}). Using default 50000 for split.")
         num_total_data_available = 50000 # Fallback
 
     test_frac = 0.15; val_frac = 0.15
     test_size = int(num_total_data_available * test_frac); val_size = int(num_total_data_available * val_frac); train_size = num_total_data_available - test_size - val_size
     if train_size <= 0 or val_size <= 0 or test_size <= 0:
-        print(f"错误：无效的数据分割大小 (Train={train_size}, Val={val_size}, Test={test_size}) from Total={num_total_data_available}")
+        print(f"Error: Invalid data split sizes (Train={train_size}, Val={val_size}, Test={test_size}) from Total={num_total_data_available}")
         return
     test_start_idx=0; test_end_idx=test_start_idx+test_size-1; val_start_idx=test_end_idx+1; val_end_idx=val_start_idx+val_size-1; train_start_idx=val_end_idx+1; train_end_idx=train_start_idx+train_size-1
-    print(f"  目标数据分割: Train=[{train_start_idx}-{train_end_idx}] ({train_size}), Val=[{val_start_idx}-{val_end_idx}] ({val_size}), Test=[{test_start_idx}-{test_end_idx}] ({test_size})")
+    print(f"  Target data split: Train=[{train_start_idx}-{train_end_idx}] ({train_size}), Val=[{val_start_idx}-{val_end_idx}] ({val_size}), Test=[{test_start_idx}-{test_end_idx}] ({test_size})")
 
     try:
         # --- Use args.max_targets for expected_k ---
@@ -783,9 +785,9 @@ def main():
         val_dataset = ChunkedEchoDataset(data_root, val_start_idx, val_end_idx, expected_k=args.max_targets)
         train_dataset = ChunkedEchoDataset(data_root, train_start_idx, train_end_idx, expected_k=args.max_targets)
         # ---
-    except Exception as e: print(f"创建数据集时出错: {e}", flush=True); traceback.print_exc(); return
+    except Exception as e: print(f"Error creating datasets: {e}", flush=True); traceback.print_exc(); return
 
-    print(f"实际数据集长度: Train={len(train_dataset)}, Val={len(val_dataset)}, Test={len(test_dataset)}")
+    print(f"Actual dataset lengths: Train={len(train_dataset)}, Val={len(val_dataset)}, Test={len(test_dataset)}")
     pin_memory=(device.type == 'cuda') # More robust check for CUDA
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=pin_memory, drop_last=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=pin_memory)
@@ -793,14 +795,14 @@ def main():
 
 
     # --- Build Model ---
-    print("构建模型 (IndexPredictionCNN)...", flush=True)
+    print("Building model (IndexPredictionCNN)...", flush=True)
     model = IndexPredictionCNN(M_plus_1, Ns, args.hidden_dim, args.dropout).to(device)
-    print(f"模型参数量: {count_parameters(model)}", flush=True)
+    print(f"Model parameter count: {count_parameters(model)}", flush=True)
 
     # --- Load Pretrained Model Logic ---
     load_path = None
     if args.load_model or args.model_dir or args.load_model_path:
-        print("尝试加载预训练 CNN 模型...", flush=True)
+        print("Trying to load pretrained CNN model...", flush=True)
         load_path = args.load_model_path
         # Try finding model in model_dir if load_model_path is not specified
         if not load_path and args.model_dir:
@@ -811,29 +813,29 @@ def main():
                  # Sort by modification time, newest first
                  potential_paths.sort(key=lambda x: os.path.getmtime(os.path.join(args.model_dir, x)), reverse=True)
                  load_path = os.path.join(args.model_dir, potential_paths[0])
-                 print(f"  在 model_dir 中找到最新模型: {load_path}")
+                 print(f"  Found latest model in model_dir: {load_path}")
             else:
                  # Fallback to check for 'best_model.pt' specifically
                  potential_path_exact = os.path.join(args.model_dir, 'best_model.pt')
                  if os.path.exists(potential_path_exact):
                          load_path = potential_path_exact
-                         print(f"  在 model_dir 中找到模型: {load_path}")
+                         print(f"  Found model in model_dir: {load_path}")
         # Try loading if a path was found or specified
         if load_path and os.path.exists(load_path):
             try:
                  model.load_state_dict(torch.load(load_path, map_location=device));
-                 print(f"  已从加载模型状态字典: {load_path}", flush=True)
-            except Exception as e: print(f"  警告：加载模型状态字典失败 {load_path}: {e}", flush=True); load_path = None
+                 print(f"  Loaded model state dict from: {load_path}", flush=True)
+            except Exception as e: print(f"  Warning: Failed to load model state dict {load_path}: {e}", flush=True); load_path = None
         elif args.load_model or args.load_model_path or args.model_dir: # Only warn if user intended to load
-            print(f"  警告：未找到要加载的模型路径 '{load_path or args.load_model_path or args.model_dir}'。", flush=True)
+            print(f"  Warning: No model path found to load '{load_path or args.load_model_path or args.model_dir}'.", flush=True)
             load_path = None
 
 
     # --- Test Only Mode ---
     if args.test_only:
         model_loaded = load_path and os.path.exists(load_path)
-        if not model_loaded: print("错误：测试模式需要成功加载模型 (--load_model_path or --model_dir)。", flush=True); return
-        print("\n[测试模式] 评估加载的模型...", flush=True)
+        if not model_loaded: print("Error: Test mode requires successfully loaded model (--load_model_path or --model_dir).", flush=True); return
+        print("\n[Test Mode] Evaluating loaded model...", flush=True)
         # --- MODIFIED: Call test_model with list ---
         test_results_per_pt, all_probs, all_targets_smooth = test_model(
             model, test_loader, device, args, M_plus_1,
@@ -841,12 +843,12 @@ def main():
             noise_std_dev_tensor
         )
         # ---
-        print("\n===== 仅测试结果 =====")
+        print("\n===== Test-Only Results =====")
         # Print results for each tested power
         for pt, results in test_results_per_pt.items():
             print(f"--- Pt = {pt:.1f} dBm ---")
-            print(f"  损失 ({args.loss_type.upper()}): {results['loss']:.4f}")
-            print(f"  Top-{args.top_k} 命中率/召回率: {results['accuracy']:.4f}")
+            print(f"  Loss ({args.loss_type.upper()}): {results['loss']:.4f}")
+            print(f"  Top-{args.top_k} hit rate/recall: {results['accuracy']:.4f}")
         visualize_predictions(all_probs, all_targets_smooth, folders, timestamp + "_test_only", M_plus_1,
                               acc_threshold=args.accuracy_threshold,
                               acc_tolerance=args.accuracy_tolerance,
@@ -854,15 +856,15 @@ def main():
         return
 
     # --- Training Setup ---
-    print(f"\n优化器: AdamW (LR={args.lr:.2e}, WD={args.weight_decay:.1e})", flush=True)
+    print(f"\nOptimizer: AdamW (LR={args.lr:.2e}, WD={args.weight_decay:.1e})", flush=True)
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay, eps=1e-8)
-    print(f"调度器: CosineAnnealingLR (T_max={args.epochs})", flush=True)
+    print(f"Scheduler: CosineAnnealingLR (T_max={args.epochs})", flush=True)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=max(1e-8, args.lr * 0.001))
-    print(f"梯度裁剪范数: {args.clip_grad_norm}", flush=True)
+    print(f"Gradient clipping norm: {args.clip_grad_norm}", flush=True)
 
     # --- Loss Function ---
     criterion = CombinedLoss(main_loss_type=args.loss_type, loss_sigma=args.loss_sigma, device=device)
-    print(f"使用损失函数: {args.loss_type.upper()} (Sigma={args.loss_sigma})")
+    print(f"Using loss function: {args.loss_type.upper()} (Sigma={args.loss_sigma})")
 
     # --- Training Loop Initialization ---
     epochs = args.epochs; best_val_loss = float('inf'); early_stop_counter = 0
@@ -876,7 +878,7 @@ def main():
     max_pt_linear_mw_train = 10**(args.max_pt_dbm / 10.0)
 
     # --- Training Loop ---
-    print(f"\n开始训练 (随机功率 [{args.min_pt_dbm}dBm, {args.max_pt_dbm}dBm], 采样: {args.power_sampling})，共 {epochs} 轮...", flush=True)
+    print(f"\nStarting training (random power [{args.min_pt_dbm}dBm, {args.max_pt_dbm}dBm], sampling: {args.power_sampling}) for {epochs} epochs...", flush=True)
     epoch_pbar = tqdm(range(epochs), desc="Overall Progress", file=sys.stdout)
 
     for epoch in epoch_pbar:
@@ -885,7 +887,7 @@ def main():
         epoch_train_loss = 0.0
         epoch_train_topk_accuracy_sum = 0.0; train_acc_batches = 0
         train_batch_count = 0; nan_skipped_count = 0
-        train_pbar = tqdm(train_loader, desc=f"第 {epoch+1}/{epochs} 轮 [训练]", leave=False, file=sys.stdout)
+        train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs} [Training]", leave=False, file=sys.stdout)
 
         for batch_idx, batch in enumerate(train_pbar):
             clean_echo = batch['echo'].to(device)
@@ -913,9 +915,9 @@ def main():
 
             # Calculate reference SNRs once (using fixed validation powers)
             if not snr_calculated and batch_idx == 0 and epoch == 0:
-                print("\n--- 参考信噪比 (基于固定验证功率点) ---", flush=True)
+                print("\n--- Reference Signal-to-Noise Ratios (based on fixed validation power points) ---", flush=True)
                 noise_power_watts_theoretic = 2 * (noise_std_dev_tensor**2)
-                print(f"  理论噪声功率: {noise_power_watts_theoretic.item():.3e} W", flush=True)
+                print(f"  Theoretical noise power: {noise_power_watts_theoretic.item():.3e} W", flush=True)
                 with torch.no_grad():
                     for ref_pt_dbm in args.val_pt_dbm_list:
                          ref_pt_linear_mw = 10**(ref_pt_dbm / 10.0)
@@ -928,7 +930,7 @@ def main():
                          avg_snr_db_reference = 10 * math.log10(avg_snr_linear_reference) if avg_snr_linear_reference > 1e-20 else -float('inf')
                          avg_snr_db_references[ref_pt_dbm] = avg_snr_db_reference
                          print(f"  Pt={ref_pt_dbm:.1f} dBm -> Avg Signal Power: {torch.mean(signal_power_watts).item():.3e} W, Avg SNR: {avg_snr_db_reference:.2f} dB", flush=True)
-                print("  注意: 实际训练信噪比会根据随机功率变化。", flush=True)
+                print("  Note: Actual training SNR will vary based on random power.", flush=True)
                 print("--------------------------------------\n", flush=True)
                 snr_calculated = True
 
@@ -943,7 +945,7 @@ def main():
                          try:
                               plt.figure(figsize=(10, 4)); plt.imshow(heatmap_tensor.numpy(), aspect='auto', origin='lower', cmap='viridis'); plt.colorbar(label='Log Magnitude'); plt.xlabel('Frequency Unit (M+1)'); plt.ylabel('Doppler Unit (Ns)'); plt.title(f'Log Magnitude Spectrum Heatmap (Sample {saved_heatmap_count}, Train Pt={current_pt_dbm_for_log:.1f}dBm)'); plt.tight_layout(); # Added Pt to title
                               heatmap_filename = f'heatmap_input_sample_{saved_heatmap_count}_{timestamp}.png'; heatmap_path = os.path.join(folders['figures'], heatmap_filename); plt.savefig(heatmap_path, dpi=100); plt.close()
-                         except Exception as e: print(f"  保存热力图样本 {saved_heatmap_count} 时出错: {e}", flush=True)
+                         except Exception as e: print(f"  Error saving heatmap sample {saved_heatmap_count}: {e}", flush=True)
                          finally: saved_heatmap_count += 1
                     else: break
 
@@ -963,7 +965,7 @@ def main():
             loss = criterion(pred_logits, target_smooth_batch)
 
             if torch.isnan(loss) or torch.isinf(loss):
-                tqdm.write(f"\n警告 (轮 {epoch+1}, 训练批次 {batch_idx}): 损失 NaN/Inf。跳过更新。", file=sys.stdout); nan_skipped_count += 1; optimizer.zero_grad(); continue
+                tqdm.write(f"\nWarning (epoch {epoch+1}, train batch {batch_idx}): Loss NaN/Inf. Skipping update.", file=sys.stdout); nan_skipped_count += 1; optimizer.zero_grad(); continue
 
             loss.backward()
             if args.clip_grad_norm > 0: torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_grad_norm)
@@ -1007,7 +1009,7 @@ def main():
                                 min_dists_s_topk_print, _ = torch.min(dist_matrix_s_topk_print, dim=1)
                                 hits_s_topk_print = torch.sum(min_dists_s_topk_print <= args.accuracy_tolerance).item()
                            # --- MODIFIED: Updated print string ---
-                           tqdm.write(f"  [Trn 轮 {epoch+1}, B {batch_idx}, S {s}, Pt {current_pt_dbm_for_log:.1f}dBm] Hits(Top{k_top_print}):{hits_s_topk_print}/{num_true_peaks} | T: {true_peaks_str}, P(Top{k_top_print}): {pred_peaks_str}", file=sys.stdout)
+                           tqdm.write(f"  [Train epoch {epoch+1}, B {batch_idx}, S {s}, Pt {current_pt_dbm_for_log:.1f}dBm] Hits(Top{k_top_print}):{hits_s_topk_print}/{num_true_peaks} | T: {true_peaks_str}, P(Top{k_top_print}): {pred_peaks_str}", file=sys.stdout)
                            # ---
                  sys.stdout.flush()
                  tqdm.write("-" * 20, file=sys.stdout)
@@ -1018,7 +1020,7 @@ def main():
         avg_train_acc = epoch_train_topk_accuracy_sum / train_acc_batches if train_acc_batches > 0 else 0.0
         train_losses.append(avg_train_loss)
         train_acc_hist.append(avg_train_acc)
-        if nan_skipped_count > 0: tqdm.write(f"警告: 轮 {epoch+1} 训练期间跳过了 {nan_skipped_count} 个 NaN/Inf 损失批次。", file=sys.stdout)
+        if nan_skipped_count > 0: tqdm.write(f"Warning: Skipped {nan_skipped_count} NaN/Inf loss batches during epoch {epoch+1} training.", file=sys.stdout)
 
         # =================== Validation Phase (Multi-Point Fixed Power) ===================
         # Use the modified test_model function for validation across specified power levels
@@ -1085,33 +1087,33 @@ def main():
         tqdm.write("-" * 30, file=sys.stdout); sys.stdout.flush()
 
     # --- End of Training ---
-    print("\n训练完成或触发早停。", flush=True)
+    print("\nTraining completed or early stopping triggered.", flush=True)
 
     # --- Final Evaluation using Best/Last Model ---
-    print("加载最佳/最终模型进行最终评估...", flush=True)
+    print("Loading best/final model for final evaluation...", flush=True)
     best_model_loaded = False
     final_model_path_used = "Final state (not saved or loaded)"
     if model_save_path and os.path.exists(model_save_path):
         try:
             model.load_state_dict(torch.load(model_save_path, map_location=device))
-            print(f"已成功加载最佳模型: {model_save_path}", flush=True)
+            print(f"Successfully loaded best model: {model_save_path}", flush=True)
             best_model_loaded = True
             final_model_path_used = model_save_path
         except Exception as e:
-            print(f"从 {model_save_path} 加载最佳模型状态字典时出错: {e}", flush=True)
+            print(f"Error loading best model state dict from {model_save_path}: {e}", flush=True)
             final_model_path_used = f"Final state (failed to load {os.path.basename(model_save_path)})"
     elif load_path and os.path.exists(load_path) and (args.test_only or not best_model_loaded): # If test_only or training didn't save a better model
          try:
             # Reload the initially loaded model if it exists and no better one was found during training
             model.load_state_dict(torch.load(load_path, map_location=device))
-            print(f"重新加载初始模型进行最终测试: {load_path}", flush=True)
+            print(f"Reloaded initial model for final test: {load_path}", flush=True)
             best_model_loaded = True
             final_model_path_used = load_path
          except Exception as e:
-            print(f"从 {load_path} 重新加载初始模型状态字典时出错: {e}。使用最终训练状态。", flush=True)
+            print(f"Error reloading initial model state dict from {load_path}. Using final training state.", flush=True)
             final_model_path_used = f"Final state (failed to reload {os.path.basename(load_path)})"
     else:
-        print("未找到保存的最佳模型或未执行保存/加载。使用最终训练状态。", flush=True)
+        print("No saved best model found or no save/load performed. Using final training state.", flush=True)
 
 
     # --- Run Final Test (using multiple fixed test powers) ---
@@ -1122,13 +1124,13 @@ def main():
         noise_std_dev_tensor
     )
     # ---
-    print("\n===== 最终测试结果 (使用已加载的最佳/最终模型) =====")
-    print(f"使用模型: {final_model_path_used}")
+    print("\n===== Final Test Results (using loaded best/final model) =====")
+    print(f"Using model: {final_model_path_used}")
     # Print final results for each tested power
     for pt, results in final_test_results_per_pt.items():
         print(f"--- Pt = {pt:.1f} dBm ---")
-        print(f"  测试损失 ({args.loss_type.upper()}): {results['loss']:.6f}")
-        print(f"  测试 Top-{args.top_k} 命中率/召回率: {results['accuracy']:.4f}")
+        print(f"  Test loss ({args.loss_type.upper()}): {results['loss']:.6f}")
+        print(f"  Test Top-{args.top_k} hit rate/recall: {results['accuracy']:.4f}")
 
     # --- Plotting and Saving Results ---
     print("\nGenerating plots and saving results...", flush=True)
@@ -1192,11 +1194,11 @@ def main():
 
     # --- Save Run Summary (Updated) ---
     summary_path = os.path.join(folders['outputs'], f'summary_{timestamp}.txt')
-    print(f"保存摘要至 {summary_path}", flush=True)
+    print(f"Saving summary to {summary_path}", flush=True)
     with open(summary_path, 'w', encoding='utf-8') as f:
-        f.write(f"实验: CNN - 随机功率训练 ({args.power_sampling} sampling)\n") # Added sampling info
-        f.write(f"时间戳: {timestamp}\n"); f.write(f"数据根目录: {data_root}\n"); f.write(f"输出基目录: {folders['output_base']}\n"); f.write(f"设备: {device}\n")
-        f.write("\n--- 参数 ---\n")
+        f.write(f"Experiment: CNN - Random Power Training ({args.power_sampling} sampling)\n") # Added sampling info
+        f.write(f"Timestamp: {timestamp}\n"); f.write(f"Data root directory: {data_root}\n"); f.write(f"Output base directory: {folders['output_base']}\n"); f.write(f"Device: {device}\n")
+        f.write("\n--- Parameters ---\n")
         # --- Exclude num_targets if it somehow exists ---
         args_dict = vars(args)
         args_dict.pop('num_targets', None) # Remove if it exists
@@ -1204,59 +1206,59 @@ def main():
         args_dict['val_pt_dbm_list'] = f"[{', '.join(map(str, args.val_pt_dbm_list))}]"
         [f.write(f"  {k}: {v}\n") for k, v in sorted(args_dict.items())]
         # ---
-        f.write("\n--- 系统参数 ---\n")
+        f.write("\n--- System Parameters ---\n")
         # --- Report K_data_param if available ---
         f.write(f"  M={M}, Ns={Ns}, BW={BW:.2e}\n")
         if K_data_param is not None:
-             f.write(f"  参数文件中的 K (K_data_param): {K_data_param}\n")
-        f.write(f"  命令行设置的最大目标数 (max_targets): {args.max_targets}\n") # Added
+             f.write(f"  K in parameter file (K_data_param): {K_data_param}\n")
+        f.write(f"  Command line max targets (max_targets): {args.max_targets}\n") # Added
         # ---
-        f.write(f"  训练功率范围 (Pt_train): [{args.min_pt_dbm:.1f}, {args.max_pt_dbm:.1f}] dBm (采样: {args.power_sampling})\n") # Added sampling info
-        f.write(f"  验证/测试功率点 (Pt_val/test): {args.val_pt_dbm_list} dBm\n")
-        f.write(f"  计算出的噪声标准差 (实/虚): {noise_std_dev:.3e}\n")
-        f.write(f"  验证/测试功率缩放因子范围: [{min_val_scaling_factor:.3f} at {min_val_pt_dbm}dBm, {max_val_scaling_factor:.3f} at {max_val_pt_dbm}dBm]\n")
+        f.write(f"  Training power range (Pt_train): [{args.min_pt_dbm:.1f}, {args.max_pt_dbm:.1f}] dBm (sampling: {args.power_sampling})\n") # Added sampling info
+        f.write(f"  Validation/test power points (Pt_val/test): {args.val_pt_dbm_list} dBm\n")
+        f.write(f"  Calculated noise standard deviation (real/imag): {noise_std_dev:.3e}\n")
+        f.write(f"  Validation/test power scaling factor range: [{min_val_scaling_factor:.3f} at {min_val_pt_dbm}dBm, {max_val_scaling_factor:.3f} at {max_val_pt_dbm}dBm]\n")
         if snr_calculated:
-            f.write(f"  计算得到的参考平均信噪比:\n")
+            f.write(f"  Calculated reference average SNR:\n")
             for pt, snr_db in avg_snr_db_references.items():
                  f.write(f"    Pt={pt:.1f}dBm -> {snr_db:.2f} dB\n")
-        else: f.write(f"  参考信噪比: 未计算\n")
-        f.write("\n--- 准确率参数 ---\n")
-        f.write(f"  评估方法: Top-K 命中率\n"); f.write(f"  K 值 (top_k): {args.top_k}\n"); f.write(f"  容差 (Tolerance): {args.accuracy_tolerance}\n"); f.write(f"  可视化阈值 (仅标记): {args.accuracy_threshold}\n")
-        f.write("\n--- 数据分割 ---\n"); f.write(f"  目标大小: Train={train_size}, Val={val_size}, Test={test_size}\n"); f.write(f"  报告长度: Train={len(train_dataset)}, Val={len(val_dataset)}, Test={len(test_dataset)}\n")
-        f.write("\n--- 模型 ---\n"); f.write(f"  模型参数量: {count_parameters(model)}\n")
-        f.write("\n--- 损失函数 ---\n"); f.write(f"  损失类型: {args.loss_type.upper()}\n"); f.write(f"  目标 Sigma: {args.loss_sigma:.2f}\n");
-        f.write("\n--- 训练结果 ---\n");
-        f.write(f"  运行轮数: {epochs_run}\n");
-        f.write(f"  早停基于最低验证功率: {critical_val_pt_dbm:.1f} dBm\n")
-        f.write(f"  最佳验证损失 (在 {critical_val_pt_dbm:.1f} dBm 时): {best_val_loss:.6f}\n")
+        else: f.write(f"  Reference SNR: Not calculated\n")
+        f.write("\n--- Accuracy Parameters ---\n")
+        f.write(f"  Evaluation method: Top-K hit rate\n"); f.write(f"  K value (top_k): {args.top_k}\n"); f.write(f"  Tolerance: {args.accuracy_tolerance}\n"); f.write(f"  Visualization threshold (marking only): {args.accuracy_threshold}\n")
+        f.write("\n--- Data Split ---\n"); f.write(f"  Target sizes: Train={train_size}, Val={val_size}, Test={test_size}\n"); f.write(f"  Reported lengths: Train={len(train_dataset)}, Val={len(val_dataset)}, Test={len(test_dataset)}\n")
+        f.write("\n--- Model ---\n"); f.write(f"  Model parameter count: {count_parameters(model)}\n")
+        f.write("\n--- Loss Function ---\n"); f.write(f"  Loss type: {args.loss_type.upper()}\n"); f.write(f"  Target Sigma: {args.loss_sigma:.2f}\n");
+        f.write("\n--- Training Results ---\n");
+        f.write(f"  Epochs run: {epochs_run}\n");
+        f.write(f"  Early stopping based on lowest validation power: {critical_val_pt_dbm:.1f} dBm\n")
+        f.write(f"  Best validation loss (at {critical_val_pt_dbm:.1f} dBm): {best_val_loss:.6f}\n")
         if epochs_run > 0:
             final_train_loss = train_losses[-1] if train_losses else float('nan'); final_train_acc = train_acc_hist[-1] if train_acc_hist else float('nan')
-            f.write(f"  最终训练损失: {final_train_loss:.4f}\n")
-            f.write(f"  最终训练 Top-{args.top_k} 命中率/召回率: {final_train_acc:.4f}\n")
-            f.write(f"  最终验证结果:\n")
+            f.write(f"  Final training loss: {final_train_loss:.4f}\n")
+            f.write(f"  Final training Top-{args.top_k} hit rate/recall: {final_train_acc:.4f}\n")
+            f.write(f"  Final validation results:\n")
             for pt in args.val_pt_dbm_list:
                  final_val_loss = val_losses_hist[pt][-1] if val_losses_hist[pt] else float('nan')
                  final_val_acc = val_acc_hist[pt][-1] if val_acc_hist[pt] else float('nan')
                  f.write(f"    Pt={pt:.1f}dBm: Loss={final_val_loss:.4f}, Top-{args.top_k} Hit={final_val_acc:.4f}\n")
-        else: f.write("  未完成任何训练轮次。\n")
-        f.write("\n--- 最终测试结果 ---\n");
-        f.write(f"  使用模型: {final_model_path_used}\n")
+        else: f.write("  No training epochs completed.\n")
+        f.write("\n--- Final Test Results ---\n");
+        f.write(f"  Using model: {final_model_path_used}\n")
         for pt, results in final_test_results_per_pt.items():
             f.write(f"  Pt = {pt:.1f} dBm:\n")
-            f.write(f"    测试损失 ({args.loss_type.upper()}): {results['loss']:.6f}\n")
-            f.write(f"    测试 Top-{args.top_k} 命中率/召回率: {results['accuracy']:.4f}\n")
-        f.write("\n--- 保存的文件 ---\n"); f.write(f"  输出目录: {folders['output_base']}\n")
-        f.write(f"  最终测试使用的模型文件/状态: {final_model_path_used}\n")
-        if epochs_run > 0 and 'metrics_curve_path' in locals() and os.path.exists(metrics_curve_path): f.write(f"  训练曲线: {metrics_curve_path}\n")
+            f.write(f"    Test loss ({args.loss_type.upper()}): {results['loss']:.6f}\n")
+            f.write(f"    Test Top-{args.top_k} hit rate/recall: {results['accuracy']:.4f}\n")
+        f.write("\n--- Saved Files ---\n"); f.write(f"  Output directory: {folders['output_base']}\n")
+        f.write(f"  Model file/state used for final test: {final_model_path_used}\n")
+        if epochs_run > 0 and 'metrics_curve_path' in locals() and os.path.exists(metrics_curve_path): f.write(f"  Training curves: {metrics_curve_path}\n")
         plot_viz_filename = f'peak_predictions_{"dist" if args.loss_type=="kldiv" else "smooth"}_{timestamp}_final_test.png'
-        if os.path.exists(os.path.join(folders['figures'], plot_viz_filename)): f.write(f"  最终测试预测图: {os.path.join(folders['figures'], plot_viz_filename)}\n")
-        if saved_heatmap_count > 0: f.write(f"  示例输入热力图: {os.path.join(folders['figures'], f'heatmap_input_sample_*_{timestamp}.png')}\n")
-        f.write(f"  摘要文件: {summary_path}\n")
+        if os.path.exists(os.path.join(folders['figures'], plot_viz_filename)): f.write(f"  Final test prediction plot: {os.path.join(folders['figures'], plot_viz_filename)}\n")
+        if saved_heatmap_count > 0: f.write(f"  Example input heatmaps: {os.path.join(folders['figures'], f'heatmap_input_sample_*_{timestamp}.png')}\n")
+        f.write(f"  Summary file: {summary_path}\n")
 
-    print(f"\n摘要已保存至 {summary_path}", flush=True)
-    print("脚本执行完毕。", flush=True)
+    print(f"\nSummary saved to {summary_path}", flush=True)
+    print("Script execution completed.", flush=True)
 
 
-# --- 脚本入口点 ---
+# --- Script entry point ---
 if __name__ == "__main__":
     main()

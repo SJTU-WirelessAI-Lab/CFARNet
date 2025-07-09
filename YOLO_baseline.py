@@ -5,7 +5,7 @@ import os
 import argparse
 from functions import load_system_params # Keep load_system_params if used
 from torch.utils.data import Dataset, DataLoader # Dataset used now
-import time # 引入时间库
+import time # Import time library
 import math # Added for noise calculations
 import datetime # Added for CDF plot timestamp
 import traceback # Added for dataset error handling
@@ -15,7 +15,7 @@ from scipy.optimize import linear_sum_assignment # <<< Import Hungarian Algorith
 from itertools import islice # For limiting dataloader
 
 # ==============================================================================
-# 0. 初始化与配置区域
+# 0. Initialization and Configuration Section
 # ==============================================================================
 print("--- Initialization and Configuration ---")
 
@@ -123,7 +123,7 @@ class ChunkedEchoDataset(Dataset):
                     current_k = arr.shape[-1]
 
                 if current_k < self.expected_k:
-                    # print(f"  Warning: {name} K dim ({current_k}) < expected_k ({self.expected_k}). Padding.")
+                    # print(f"  Warning: {name} K dim ({current_k}) < expected_k ({self.expected_k}). Padding.")
                     if arr.ndim == 2: pad_config = ((0, 0), (0, self.expected_k - current_k))
                     elif arr.ndim == 3: pad_config = ((0, 0), (0, 0), (0, self.expected_k - current_k))
                     else: raise ValueError(f"{name} has unsupported dimensions {arr.ndim}.")
@@ -131,16 +131,16 @@ class ChunkedEchoDataset(Dataset):
                     padded_arr = np.pad(arr, pad_config, 'constant', constant_values=fill_value)
                     setattr(self, arr_ref, padded_arr)
                 elif current_k > self.expected_k:
-                    # print(f"  Warning: {name} K dim ({current_k}) > expected_k ({self.expected_k}). Truncating.")
+                    # print(f"  Warning: {name} K dim ({current_k}) > expected_k ({self.expected_k}). Truncating.")
                     if arr.ndim == 2: truncated_arr = arr[:, :self.expected_k]
                     elif arr.ndim == 3: truncated_arr = arr[:, :, :self.expected_k]
                     else: raise ValueError(f"{name} has unsupported dimensions {arr.ndim}.")
                     setattr(self, arr_ref, truncated_arr)
 
-            # print(f"  Loaded m_peak_targets shape: {self.m_peak_targets.shape}") # Less verbose
+            # print(f"  Loaded m_peak_targets shape: {self.m_peak_targets.shape}") # Less verbose
             # print(f"  Loaded theta_targets final shape: {self.theta_targets.shape}")
-            # print(f"  Loaded r_targets shape: {self.r_targets.shape}")
-            # print(f"  Loaded vr_targets shape: {self.vr_targets.shape}")
+            # print(f"  Loaded r_targets shape: {self.r_targets.shape}")
+            # print(f"  Loaded vr_targets shape: {self.vr_targets.shape}")
 
         except KeyError as e: raise IOError(f"Missing key while loading trajectory_data.npz: {e}")
         except Exception as e: raise IOError(f"Error loading or processing trajectory_data.npz: {e}")
@@ -235,7 +235,7 @@ PHI_END_DEG = 60
 
 # --- 0.2.1 Determine Data Root Directory ---
 def get_latest_experiment_path():
-    """Tries to find the latest experiment path from standard locations."""
+    """Read experiment directory path from latest_experiment.txt"""
     try:
         try: script_dir = os.path.dirname(os.path.abspath(__file__))
         except NameError: script_dir = os.getcwd() # Fallback for interactive environments
@@ -245,10 +245,10 @@ def get_latest_experiment_path():
             os.path.join(os.getcwd(), 'latest_experiment.txt')         # Path relative to current working dir
         ]
         file_path = next((p for p in paths_to_check if os.path.exists(p)), None)
-        if file_path is None: raise FileNotFoundError("未在标准位置找到 latest_experiment.txt。")
+        if file_path is None: raise FileNotFoundError("Could not find latest_experiment.txt in standard locations.")
         with open(file_path, 'r') as f: return f.read().strip()
-    except FileNotFoundError: print("错误：未找到 'latest_experiment.txt'。", flush=True); raise
-    except Exception as e: print(f"读取 latest_experiment.txt 时发生错误: {e}", flush=True); raise
+    except FileNotFoundError: print("Error: Could not find 'latest_experiment.txt'.", flush=True); raise
+    except Exception as e: print(f"Error reading latest_experiment.txt: {e}", flush=True); raise
 
 if args.data_dir:
     DATA_ROOT = args.data_dir
