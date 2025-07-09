@@ -3,15 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
-# <<< Import the specific CNN definition from the training script >>>
-try:
-    # Ensure train_ablation.py or equivalent is accessible
-    from train import IndexPredictionCNN
-except ImportError:
-    # Fallback: Define the CNN class directly here if import fails
-    print("Warning: Could not import IndexPredictionCNN from train_ablation.py.")
-    print("Using placeholder definition - REPLACE WITH YOUR ACTUAL MODEL.")
-    # --- Placeholder CNN Definition ---
+from train import IndexPredictionCNN
+
     class IndexPredictionCNN(nn.Module):
         def __init__(self, M_plus_1, Ns, hidden_dim=512, dropout=0.2): # Ensure params match
             super().__init__()
@@ -37,7 +30,6 @@ except ImportError:
             features=self.feature_extractor(Y_input); features_pooled=torch.max(features, dim=2)[0]
             logits=self.predictor(features_pooled); logits=logits.squeeze(1)
             return logits, Y_magnitude_log
-    # --- End Placeholder ---
 
 import torch.nn.functional as F
 import os
@@ -47,16 +39,8 @@ import sys
 import traceback
 import math
 import datetime
-# <<< Import islice >>>
 from itertools import islice
-try:
-    from functions import load_system_params
-except ImportError:
-    print("Warning: Could not import 'load_system_params' from 'functions_new'. Using placeholder.")
-    def load_system_params(*args, **kwargs): # Define placeholder
-        print("Warning: Using placeholder load_system_params.")
-        return {'Nt': 1, 'Nr': 64, 'M': 2047, 'Ns': 32, 'fc': 77e9, 'f_scs': 60e3,
-                'K': 3, 'lambda_c': 3e8 / 77e9, 'BW': 2047*60e3, 'Delta_T': 1/60e3}
+from functions import load_system_params
 from torch.utils.data import Dataset, DataLoader
 from scipy.optimize import linear_sum_assignment
 
@@ -171,7 +155,6 @@ def main_test():
     data_root = args.data_dir; params_file = os.path.join(data_root, 'system_params.npz'); assert os.path.exists(params_file), f"{params_file}"
     try:
         # <<< Unpack the tuple returned by load_system_params >>>
-        # Make sure the order matches the return statement in functions_new.load_system_params
         Nt, Nr, M, Ns, fc, f_scs, Delta_T, D_rayleigh, K_data_max, d, lambda_c, fm_list_np = load_system_params(params_file)
         M_plus_1 = M + 1
         fm_list = torch.from_numpy(fm_list_np.astype(np.float32)).to(device)
@@ -181,8 +164,8 @@ def main_test():
         phi_start_deg = -60 # Should ideally load from params if saved
         phi_end_deg = 60   # Should ideally load from params if saved
         c = 3e8
-    except ImportError: # Handle case where functions_new is not available
-        print("Error: Could not import load_system_params from functions_new.py. Cannot proceed without system parameters.")
+    except ImportError: 
+        print("Error: Could not import load_system_params from functions.py. Cannot proceed without system parameters.")
         exit(1)
     except Exception as e: raise IOError(f"Error loading or unpacking system_params.npz: {e}") # General error handling
 
@@ -408,21 +391,17 @@ def main_test():
     num_valid_pairs_r = len(valid_errors_r)
     num_valid_pairs_v = len(valid_errors_v)
 
-    # Calculate overall RMSE (as before)
+    # Calculate overall RMSE 
     rmse_theta = np.sqrt(np.mean(valid_errors_theta**2)) if num_valid_pairs_theta > 0 else np.nan
     rmse_r = np.sqrt(np.mean(valid_errors_r**2)) if num_valid_pairs_r > 0 else np.nan
     rmse_v = np.sqrt(np.mean(valid_errors_v**2)) if num_valid_pairs_v > 0 else np.nan
 
-    # Calculate 95th percentile (as before)
+    # Calculate 95th percentile
     print("Calculating 95th percentile errors...") # English print
     percentile_95_theta = np.percentile(valid_errors_theta, 95) if num_valid_pairs_theta > 0 else np.nan
     percentile_95_r = np.percentile(valid_errors_r, 95) if num_valid_pairs_r > 0 else np.nan
     percentile_95_v = np.percentile(valid_errors_v, 95) if num_valid_pairs_v > 0 else np.nan
 
-
-    # <<<================================================================>>>
-    # <<< ADDED: Save all valid absolute errors for post-processing      >>>
-    # <<<================================================================>>>
     print("\nSaving all matched absolute errors for post-processing...")
     try:
         # Determine script directory (handle interactive vs script execution)
@@ -449,9 +428,6 @@ def main_test():
     except Exception as e:
         print(f"Error saving matched absolute errors: {e}")
         traceback.print_exc() # Print detailed traceback for debugging
-    # <<<================================================================>>>
-    # <<< END ADDED SECTION                                              >>>
-    # <<<================================================================>>>
 
 
     # --- Print Performance Summary ---
