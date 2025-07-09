@@ -25,8 +25,8 @@ CFARNet旨在为雷达信号处理和目标检测提供一套完整的仿真、�
 | `data_generation.py` | Generate yecho channel parameters, target trajectories, and system parameters with batch simulation and dataset generation support.<br>生成yecho信道参数、目标运动轨迹、系统参数等，支持批量仿真和数据集生成。 |
 | `trajectory.py` | Target trajectory generation module supporting various motion patterns and parameter configurations.<br>目标运动轨迹生成模块，支持多种运动模式和参数配置。 |
 | `train.py` | Main deep learning model training script supporting CNN training, validation, testing, and visualization.<br>深度学习模型训练主脚本，支持CNN等模型的训练、验证、测试与可视化。 |
-| `CFARNet.py` | Parameter estimation using CNN+MUSIC vs traditional CFAR method comparison testing script.<br>基于CNN+MUSIC的参数估计与传统CFAR方法对比测试脚本。 |
-| `YOLO_baseline.py` | YOLO method target detection inference and evaluation script with various noise and parameter configurations.<br>YOLO方法的目标检测推理与评测脚本，支持多种噪声和参数配置。 |
+| `CFARNet.py` | CFARNet neural network method implementation for high-resolution multi-target detection (main method from the paper).<br>CFARNet神经网络方法实现，用于高分辨率多目标检测（论文主要方法）。 |
+| `YOLO_baseline.py` | Traditional CFAR+MUSIC baseline method for comparison with the proposed CFARNet approach.<br>传统CFAR+MUSIC基线方法，用于与所提出的CFARNet方法进行对比。 |
 | `functions.py` | Core utility function library including dataset loading, signal processing, feature extraction, and evaluation metrics.<br>核心工具函数库，包括数据集加载、信号处理、特征提取、评测指标等。 |
 | `environment.yml` | Conda environment dependency configuration file containing all required packages and versions.<br>Conda环境依赖配置文件，包含所有运行所需的包和版本。 |
 | `Readme.md` | Project documentation.<br>项目说明文档。 |
@@ -79,11 +79,11 @@ python train.py --data_dir ./data/my_exp --batch_size 16 --epochs 50 --max_targe
 - `--max_targets`: Maximum number of targets / 最大目标数
 - Other parameters see script comments and command line help / 其他参数详见脚本内注释和命令行帮助
 
-### 4. Traditional CFAR+MUSIC Baseline Testing / 传统CFAR+MUSIC baseline测试
+### 4. CFARNet Neural Network Method Testing / CFARNet神经网络方法测试
 
-Compare with traditional methods:
+Run the proposed CFARNet method:
 
-对比传统方法：
+运行所提出的CFARNet方法：
 
 ```bash
 python CFARNet.py --data_dir ./data/my_exp --model_dir ./models/my_exp --top_k_cnn 3
@@ -95,7 +95,11 @@ python CFARNet.py --data_dir ./data/my_exp --model_dir ./models/my_exp --top_k_c
 - `--top_k_cnn`: Top-K peaks from CNN output / CNN输出的Top-K峰值
 - Other parameters see script comments and command line help / 其他参数详见脚本内注释和命令行帮助
 
-### 5. YOLO Method Inference/Testing (Optional) / YOLO方法推理/测试（可选）
+### 5. Traditional CFAR+MUSIC Baseline Testing (Optional) / 传统CFAR+MUSIC基线测试（可选）
+
+Compare with traditional CFAR+MUSIC method:
+
+与传统CFAR+MUSIC方法对比：
 
 ```bash
 python YOLO_baseline.py --data_dir ./data/my_exp --num_test_samples 1000
@@ -153,14 +157,14 @@ Main deep learning training script supporting CNN and other model training, vali
 深度学习训练主脚本，支持CNN等模型的训练、验证、测试。内置多种损失函数、评测指标、可视化工具。支持断点续训、实验结果自动保存。
 
 ### CFARNet.py
-Implements CNN+MUSIC-based parameter estimation method and compares with traditional CFAR methods. Supports batch testing, result visualization, and performance evaluation.
+Implements the proposed CFARNet neural network method for high-resolution multi-target detection. This is the main contribution of the paper, using CNN-based peak detection in the angle-Doppler domain to replace traditional CFAR methods.
 
-实现基于CNN+MUSIC的参数估计方法，并与传统CFAR方法进行对比。支持批量测试、结果可视化、性能评估。
+实现所提出的CFARNet神经网络方法，用于高分辨率多目标检测。这是论文的主要贡献，使用基于CNN的角度-多普勒域峰值检测来替代传统CFAR方法。
 
 ### YOLO_baseline.py
-Implements YOLO method target detection inference and evaluation. Supports various noise and parameter configurations for comparison with deep learning methods.
+Implements traditional CFAR+MUSIC baseline method for comparison with the proposed CFARNet approach. Provides performance benchmarks to demonstrate the superiority of the neural network-based method.
 
-实现YOLO方法的目标检测推理与评测。支持多种噪声、参数配置，便于与深度学习方法对比。
+实现传统CFAR+MUSIC基线方法，用于与所提出的CFARNet方法进行对比。提供性能基准，以证明基于神经网络方法的优越性。
 
 ### functions.py
 Provides core utility functions for dataset loading, signal processing, feature extraction, evaluation metrics, etc. Facilitates main process script calls and improves code reusability.
