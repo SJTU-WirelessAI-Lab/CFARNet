@@ -329,17 +329,17 @@ def get_latest_experiment_path():
             os.path.join(os.getcwd(), 'latest_experiment.txt')         # Path relative to current working dir
         ]
         file_path = next((p for p in paths_to_check if os.path.exists(p)), None)
-        if file_path is None: raise FileNotFoundError("未在标准位置找到 latest_experiment.txt。")
+        if file_path is None: raise FileNotFoundError("latest_experiment.txt not found in standard locations.")
         with open(file_path, 'r') as f: return f.read().strip()
-    except FileNotFoundError: print("错误：未找到 'latest_experiment.txt'。", flush=True); raise
-    except Exception as e: print(f"读取 latest_experiment.txt 时发生错误: {e}", flush=True); raise
+    except FileNotFoundError: print("Error: 'latest_experiment.txt' not found.", flush=True); raise
+    except Exception as e: print(f"Error reading latest_experiment.txt: {e}", flush=True); raise
 
 
 def create_timestamp_folders(base_data_root=None):
     """Creates timestamped output folders based on the data root directory."""
     if base_data_root is None:
         try: data_root = get_latest_experiment_path()
-        except Exception: print("警告：未找到 latest_experiment.txt 或读取错误... 将使用默认输出路径。", flush=True); data_root = './output/default_experiment'; os.makedirs(data_root, exist_ok=True)
+        except Exception: print("Warning: latest_experiment.txt not found or reading error... Will use default output path.", flush=True); data_root = './output/default_experiment'; os.makedirs(data_root, exist_ok=True)
     else: data_root = base_data_root
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S'); norm_data_root = os.path.normpath(data_root)
     # Use experiment name from data root, or a default if data_root is trivial
@@ -364,7 +364,7 @@ def set_matplotlib_english():
         plt.rcParams['ytick.labelsize'] = 10
         plt.rcParams['legend.fontsize'] = 10
     except Exception as e:
-        print(f"设置 Matplotlib 字体时出错: {e}", flush=True)
+        print(f"Error setting Matplotlib font: {e}", flush=True)
 
 def count_parameters(model):
     """Counts the number of trainable parameters in a PyTorch model."""
@@ -375,14 +375,14 @@ def count_parameters(model):
 # <<< Top-K Accuracy Calculation Function >>> (Handles padding in true_peak_indices_batch)
 def calculate_accuracy_topk(pred_probs, true_peak_indices_batch, k, tolerance):
     """
-    计算批次内基于 Top-K 预测的目标检测准确率（召回率@TopK, 容忍度）。
+    Calculate target detection accuracy based on Top-K predictions in batch (Recall@TopK, with tolerance).
     Args:
-        pred_probs (torch.Tensor): 模型输出的预测概率 (B, M+1)。
-        true_peak_indices_batch (torch.Tensor): 真实的峰值索引 (B, K_true)，可能包含填充值 (如 -1)。
-        k (int): Top-K 中的 K 值。
-        tolerance (int): 命中容忍度（子载波数量）。
+        pred_probs (torch.Tensor): Model output prediction probabilities (B, M+1).
+        true_peak_indices_batch (torch.Tensor): True peak indices (B, K_true), may contain padding values (like -1).
+        k (int): K value in Top-K.
+        tolerance (int): Hit tolerance (number of subcarriers).
     Returns:
-        float: 该批次的平均 Top-K 命中率/召回率。
+        float: Average Top-K hit rate/recall for this batch.
     """
     batch_size = pred_probs.shape[0]
     M_plus_1 = pred_probs.shape[1]
@@ -482,25 +482,25 @@ def test_model(model: nn.Module,
                noise_std_dev_tensor: torch.Tensor
                ) -> Tuple[Dict[float, Dict[str, float]], List[torch.Tensor], List[torch.Tensor]]:
     """
-    在多个指定的发射功率水平上测试模型。
+    Test model at multiple specified transmit power levels.
 
     Args:
-        model: 要测试的模型。
-        test_loader: 测试数据加载器。
-        device: 计算设备。
-        args: 包含参数 (loss_type, max_targets, top_k, accuracy_tolerance 等) 的命名空间。
-        M_plus_1: 子载波数量 + 1。
-        pt_dbm_list_test: 用于测试的发射功率 (dBm) 列表。
-        noise_std_dev_tensor: 噪声标准差张量。
+        model: Model to test.
+        test_loader: Test data loader.
+        device: Computing device.
+        args: Namespace containing parameters (loss_type, max_targets, top_k, accuracy_tolerance, etc.).
+        M_plus_1: Number of subcarriers + 1.
+        pt_dbm_list_test: List of transmit power (dBm) for testing.
+        noise_std_dev_tensor: Noise standard deviation tensor.
 
     Returns:
         Tuple containing:
-        - results_per_pt (Dict[float, Dict[str, float]]): 包含每个 Pt_dBm 的平均损失和准确率的字典。
+        - results_per_pt (Dict[float, Dict[str, float]]): Dictionary containing average loss and accuracy for each Pt_dBm.
             Example: {10.0: {'loss': 0.1, 'accuracy': 0.9}, -10.0: {'loss': 0.5, 'accuracy': 0.6}}
-        - all_pred_probs_list (List[torch.Tensor]): (来自第一个 Pt) 预测概率列表，用于可视化。
-        - all_target_smooth_list (List[torch.Tensor]): (来自第一个 Pt) 平滑目标列表，用于可视化。
+        - all_pred_probs_list (List[torch.Tensor]): (from first Pt) Prediction probability list for visualization.
+        - all_target_smooth_list (List[torch.Tensor]): (from first Pt) Smooth target list for visualization.
     """
-    print(f"\n开始多点模型测试 (损失: {args.loss_type}, Pts_test={pt_dbm_list_test} dBm, MaxTargets={args.max_targets}, TopK={args.top_k})...", flush=True)
+    print(f"\nStarting multi-point model testing (loss: {args.loss_type}, Pts_test={pt_dbm_list_test} dBm, MaxTargets={args.max_targets}, TopK={args.top_k})...", flush=True)
     model.eval()
 
     # Initialize results structure
@@ -512,7 +512,7 @@ def test_model(model: nn.Module,
     collect_viz_data = True # Flag to collect only during the first power level iteration
 
     loss_fn = CombinedLoss(main_loss_type=args.loss_type, loss_sigma=args.loss_sigma, device=device)
-    print(f"  准确率指标: Top-{args.top_k} 命中率 @ 容差={args.accuracy_tolerance}", flush=True)
+    print(f"  Accuracy metric: Top-{args.top_k} hit rate @ tolerance={args.accuracy_tolerance}", flush=True)
 
     with torch.no_grad():
         # Outer loop for power levels
@@ -522,7 +522,7 @@ def test_model(model: nn.Module,
             current_pt_scaling_factor = math.sqrt(current_pt_linear_mw)
             current_pt_scaling_factor_tensor = torch.tensor(current_pt_scaling_factor, dtype=torch.float32, device=device)
 
-            test_pbar = tqdm(test_loader, desc=f"测试 Pt={current_pt_dbm:.1f}dBm", leave=False, file=sys.stdout)
+            test_pbar = tqdm(test_loader, desc=f"Testing Pt={current_pt_dbm:.1f}dBm", leave=False, file=sys.stdout)
             batch_loss_accum = 0.0
             batch_acc_accum = 0.0
             batch_count = 0
@@ -576,7 +576,7 @@ def test_model(model: nn.Module,
                          postfix_dict = {'L': f"{loss.item():.4f}", f'Top{args.top_k}Hit': f"{accuracy:.3f}"}
                          test_pbar.set_postfix(postfix_dict)
                 else:
-                    print(f"警告：测试批次 {batch_idx} (Pt={current_pt_dbm:.1f}dBm) 中遇到 NaN/Inf 损失。", flush=True)
+                    print(f"Warning: NaN/Inf loss encountered in test batch {batch_idx} (Pt={current_pt_dbm:.1f}dBm).", flush=True)
                     if batch_idx % 50 == 0 or batch_idx == len(test_loader) - 1:
                         test_pbar.set_postfix({'loss': "NaN"})
 
@@ -590,18 +590,18 @@ def test_model(model: nn.Module,
                 results_per_pt[current_pt_dbm]['loss'] = float('inf')
                 results_per_pt[current_pt_dbm]['accuracy'] = 0.0
                 results_per_pt[current_pt_dbm]['count'] = 0
-                print(f"    Pt={current_pt_dbm:.1f}dBm - 无有效批次进行评估。", flush=True)
+                print(f"    Pt={current_pt_dbm:.1f}dBm - No valid batches for evaluation.", flush=True)
 
             # Stop collecting visualization data after the first power level
             collect_viz_data = False
 
 
-    print("\n多点测试结果汇总:", flush=True)
+    print("\nMulti-point test results summary:", flush=True)
     for pt, results in results_per_pt.items():
         print(f"  Pt = {pt:.1f} dBm:")
-        print(f"    平均损失 ({args.loss_type.upper()}): {results['loss']:.4f}")
-        print(f"    平均 Top-{args.top_k} 命中率/召回率 (Recall@Top{args.top_k}, Tol={args.accuracy_tolerance}): {results['accuracy']:.4f}")
-        print(f"    有效批次数: {results['count']}")
+        print(f"    Average loss ({args.loss_type.upper()}): {results['loss']:.4f}")
+        print(f"    Average Top-{args.top_k} hit rate/recall (Recall@Top{args.top_k}, Tol={args.accuracy_tolerance}): {results['accuracy']:.4f}")
+        print(f"    Valid batches: {results['count']}")
 
     gc.collect();
     if torch.cuda.is_available(): torch.cuda.empty_cache()
@@ -701,8 +701,8 @@ def main():
     folders['models'] = os.path.join(folders['output_base'], 'models')
     folders['outputs'] = os.path.join(folders['output_base'], 'outputs')
     for folder_key in ['figures', 'models', 'outputs']: os.makedirs(folders[folder_key], exist_ok=True)
-    print(f"输出文件位于: {folders['output_base']}", flush=True)
-    print(f"训练功率采样方式: {args.power_sampling}")
+    print(f"Output files located at: {folders['output_base']}", flush=True)
+    print(f"Training power sampling method: {args.power_sampling}")
 
 
     # --- Load System Params, Calculate Noise/Scaling ---
