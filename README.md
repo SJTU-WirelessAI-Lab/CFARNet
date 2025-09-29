@@ -52,6 +52,8 @@ Generate echo channel parameters and target motion data:
 python data_generation.py --sample_num 5000 --chunk_size 500 --experiment_name my_exp
 ```
 
+Change to a smaller sample_num and chunk_size if there is a memory limit.
+
 **Main Parameter Descriptions:**
 - `--sample_num`: Number of samples to generate
 - `--chunk_size`: Number of samples per data chunk
