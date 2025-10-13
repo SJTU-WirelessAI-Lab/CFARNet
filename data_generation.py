@@ -100,10 +100,6 @@ def compute_echo_from_factors_optimized(
     # 2) Calculate BF_t_all, BF_r_all: shape [B, M, Nt]
     BF_t_all = torch.exp(1j * phase_t).to(dtype)  # [B,M,Nt]
     BF_r_all = torch.exp(1j * phase_r).to(dtype)
-    
-    norm_factor = torch.sqrt(torch.tensor(Nt, device=device, dtype=torch.float32))
-    BF_t_all = BF_t_all / norm_factor
-    BF_r_all = BF_r_all / norm_factor
 
     # 3) Initialize echo
     echo = torch.zeros((B, Ns, M), dtype=dtype, device=device)
