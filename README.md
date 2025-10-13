@@ -40,8 +40,11 @@ CFARNet aims to provide a complete toolchain for radar signal processing and tar
 It is recommended to use Anaconda/Miniconda and execute the following commands to create the environment:
 
 ```bash
-conda env create -f environment.yml
+conda config --add channels conda forge（新增源）
+conda env create -f environment.yml（删除tzdata和huggingce，这两个包在conda源中找不到，需要额外安装，删除除python外所有的版本号，否则有些包的版本会互相不兼容导致安装失败）
 conda activate isac
+pip install tzdata（额外安装tzdata）
+pip install huggingface（额外安装huggingface）
 ```
 
 ### 2. Data Generation
@@ -50,9 +53,9 @@ Generate echo channel parameters and target motion data:
 
 ```bash
 python data_generation.py --sample_num 5000 --chunk_size 500 --experiment_name my_exp
+python data_generation.py --samples 5000 --chunk 5 --name my_exp(上面那条指令跑不通，需要做修改）
+生成的轨迹和速度是完全独立的，这里是否会有问题？速度是否应该是轨迹的导数？
 ```
-
-Change to a smaller sample_num and chunk_size if there is a memory limit.
 
 **Main Parameter Descriptions:**
 - `--sample_num`: Number of samples to generate
@@ -66,6 +69,7 @@ Train CNN and other deep learning models:
 
 ```bash
 python train.py --data_dir ./data/my_exp --batch_size 16 --epochs 50 --max_targets 3
+运行这一步的时候在train.py的1240行会出现key error，疑似是由于parser将args.val_pt_dbm_list识别为字符串引起的，因此读取出的pt实际上为"[","-","1","0"等字符，而不能读取出数字，这里的代码需要修改
 ```
 
 **Main Parameter Descriptions:**
@@ -81,6 +85,9 @@ Run the proposed CFARNet method:
 
 ```bash
 python CFARNet.py --data_dir ./data/my_exp --model_dir ./models/my_exp --top_k_cnn 3
+python CFARNet.py --data_dir ./data/my_exp --model_dir ./output/my_exp/models --top_k_cnn 3(下面这条描述的路径比较符合代码生成的文件路径）
+
+
 ```
 
 **Main Parameter Descriptions:**
