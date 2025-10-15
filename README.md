@@ -41,10 +41,10 @@ It is recommended to use Anaconda/Miniconda and execute the following commands t
 
 ```bash
 conda config --add channels conda forge
-conda env create -f environment.yml（删除tzdata和huggingce，这两个包在conda源中找不到，需要额外安装，删除除python外所有的版本号，否则有些包的版本会互相不兼容导致安装失败）
+conda env create -f environment.yml
 conda activate isac
-pip install tzdata（额外安装tzdata）
-pip install huggingface（额外安装huggingface）
+pip install tzdata
+pip install huggingface
 ```
 
 ### 2. Data Generation
