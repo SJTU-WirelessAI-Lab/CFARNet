@@ -1237,9 +1237,14 @@ def main():
             f.write(f"  Final training Top-{args.top_k} hit rate/recall: {final_train_acc:.4f}\n")
             f.write(f"  Final validation results:\n")
             for pt in args.val_pt_dbm_list:
-                 final_val_loss = val_losses_hist[pt][-1] if val_losses_hist[pt] else float('nan')
-                 final_val_acc = val_acc_hist[pt][-1] if val_acc_hist[pt] else float('nan')
-                 f.write(f"    Pt={pt:.1f}dBm: Loss={final_val_loss:.4f}, Top-{args.top_k} Hit={final_val_acc:.4f}\n")
+                if type(num)!=int:
+                    continue
+                if pt in val_losses_hist:
+                    final_val_loss = val_losses_hist[pt][-1] if val_losses_hist[pt] else float('nan')
+                    final_val_acc = val_acc_hist[pt][-1] if val_acc_hist[pt] else float('nan')
+                    f.write(f"    Pt={pt:.1f}dBm: Loss={final_val_loss:.4f}, Top-{args.top_k} Hit={final_val_acc:.4f}\n")
+                else:
+                    continue
         else: f.write("  No training epochs completed.\n")
         f.write("\n--- Final Test Results ---\n");
         f.write(f"  Using model: {final_model_path_used}\n")

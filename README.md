@@ -40,8 +40,11 @@ CFARNet aims to provide a complete toolchain for radar signal processing and tar
 It is recommended to use Anaconda/Miniconda and execute the following commands to create the environment:
 
 ```bash
+conda config --add channels conda forge
 conda env create -f environment.yml
 conda activate isac
+pip install tzdata
+pip install huggingface
 ```
 
 ### 2. Data Generation
@@ -49,10 +52,10 @@ conda activate isac
 Generate echo channel parameters and target motion data:
 
 ```bash
-python data_generation.py --sample_num 5000 --chunk_size 500 --experiment_name my_exp
-```
 
-Change to a smaller sample_num and chunk_size if there is a memory limit.
+python data_generation.py --samples 5000 --chunk 500 --name my_exp
+
+```
 
 **Main Parameter Descriptions:**
 - `--sample_num`: Number of samples to generate
@@ -80,7 +83,8 @@ python train.py --data_dir ./data/my_exp --batch_size 16 --epochs 50 --max_targe
 Run the proposed CFARNet method:
 
 ```bash
-python CFARNet.py --data_dir ./data/my_exp --model_dir ./models/my_exp --top_k_cnn 3
+python CFARNet.py --data_dir ./data/my_exp --model_dir ./output/my_exp/models --top_k_cnn 3
+
 ```
 
 **Main Parameter Descriptions:**
