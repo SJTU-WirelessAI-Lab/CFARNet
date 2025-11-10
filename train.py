@@ -739,7 +739,7 @@ def main():
 
 
     # --- Calculate noise standard deviation (independent of Pt) ---
-    noise_power_total_linear = K_BOLTZMANN * T_NOISE_KELVIN * BW
+    noise_power_total_linear = K_BOLTZMANN * T_NOISE_KELVIN * BW* 1000.0
     noise_variance_per_component = noise_power_total_linear / 2.0; noise_std_dev = math.sqrt(noise_variance_per_component)
     noise_std_dev_tensor = torch.tensor(noise_std_dev, dtype=torch.float32)
     print(f"Noise standard deviation (real/imag): {noise_std_dev:.3e}")
@@ -917,7 +917,7 @@ def main():
             if not snr_calculated and batch_idx == 0 and epoch == 0:
                 print("\n--- Reference Signal-to-Noise Ratios (based on fixed validation power points) ---", flush=True)
                 noise_power_watts_theoretic = 2 * (noise_std_dev_tensor**2)
-                print(f"  Theoretical noise power: {noise_power_watts_theoretic.item():.3e} W", flush=True)
+                print(f"  Theoretical noise power: {noise_power_watts_theoretic.item():.3e} mW", flush=True)
                 with torch.no_grad():
                     for ref_pt_dbm in args.val_pt_dbm_list:
                          ref_pt_linear_mw = 10**(ref_pt_dbm / 10.0)
@@ -929,7 +929,7 @@ def main():
                          avg_snr_linear_reference = torch.mean(snr_per_sample).item()
                          avg_snr_db_reference = 10 * math.log10(avg_snr_linear_reference) if avg_snr_linear_reference > 1e-20 else -float('inf')
                          avg_snr_db_references[ref_pt_dbm] = avg_snr_db_reference
-                         print(f"  Pt={ref_pt_dbm:.1f} dBm -> Avg Signal Power: {torch.mean(signal_power_watts).item():.3e} W, Avg SNR: {avg_snr_db_reference:.2f} dB", flush=True)
+                         print(f"  Pt={ref_pt_dbm:.1f} dBm -> Avg Signal Power: {torch.mean(signal_power_watts).item():.3e} mW, Avg SNR: {avg_snr_db_reference:.2f} dB", flush=True)
                 print("  Note: Actual training SNR will vary based on random power.", flush=True)
                 print("--------------------------------------\n", flush=True)
                 snr_calculated = True

@@ -317,7 +317,7 @@ print(f"  f0 (for Vel MUSIC)={f0/1e9:.4f} GHz")
 
 # --- 0.5 Calculate Constant Noise Standard Deviation ---
 # Noise std dev depends only on BW and Temp, not Pt
-noise_power = K_BOLTZMANN * T_NOISE_KELVIN * BW
+noise_power = K_BOLTZMANN * T_NOISE_KELVIN * BW*1000.0
 noise_std_dev = math.sqrt(noise_power / 2.0)
 print(f"Thermal Noise Power (kTB): {noise_power:.2e} W -> Noise Std Dev (per component): {noise_std_dev:.2e}")
 noise_std_dev_tensor = torch.tensor(noise_std_dev, dtype=torch.float32).to(device)

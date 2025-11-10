@@ -180,7 +180,7 @@ def main_test():
 
     # --- Calculate Noise ---
     pt_linear_mw = 10**(args.pt_dbm / 10.0); pt_scaling_factor = math.sqrt(pt_linear_mw)
-    noise_power = K_BOLTZMANN * T_NOISE_KELVIN * BW; noise_std_dev = math.sqrt(noise_power / 2.0)
+    noise_power = K_BOLTZMANN * T_NOISE_KELVIN * BW* 1000.0; noise_std_dev = math.sqrt(noise_power / 2.0)
     noise_std_dev_tensor = torch.tensor(noise_std_dev, dtype=torch.float32).to(device)
     print(f"Pt: {args.pt_dbm} dBm, Noise Std Dev: {noise_std_dev:.2e}") # English print
 
