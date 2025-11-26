@@ -18,7 +18,7 @@ import pandas as pd
 # ==============================================================================
 # 0. Initialization and Configuration
 # ==============================================================================
-print("--- Initialization: Baseline (CFAR+MUSIC) Full Test (With Percentiles) ---")
+print("--- Initialization: Baseline (CFAR+MUSIC) Full Test (Pt + Thermal Noise) ---")
 
 class ChunkedEchoDataset(Dataset):
     def __init__(self, data_root, start_idx, end_idx, expected_k):
@@ -86,9 +86,13 @@ parser.add_argument('--cuda_device', type=str, default='cpu')
 parser.add_argument('--data_dir', type=str, default=None) 
 args = parser.parse_args()
 
-# >>> CONFIGURATION <<<
-snr_db_test_list = [-10, 0, 10, 20] 
-print(f"Test SNRs: {snr_db_test_list} dB")
+# >>> CONFIGURATION (MODIFIED: Use Pt list instead of SNR list) <<<
+pt_dbm_test_list = [-10, 0, 10, 20, 30] 
+print(f"Test Transmit Powers (Pt): {pt_dbm_test_list} dBm")
+
+# --- Constants for Noise Calculation ---
+K_BOLTZMANN = 1.38e-23
+T_NOISE_KELVIN = 290
 
 BATCH_SIZE = 1
 GUARD_DOPPLER, REF_DOPPLER = 2, 4
@@ -134,12 +138,13 @@ test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num
 # ==============================================================================
 overall_results = [] 
 
-for snr_db in snr_db_test_list:
+# >>> MODIFIED LOOP: Iterate over Pt (dBm) <<<
+for pt_dbm in pt_dbm_test_list:
     print(f"\n{'='*40}")
-    print(f" STARTING TEST FOR SNR = {snr_db} dB")
+    print(f" STARTING TEST FOR Pt = {pt_dbm} dBm")
     print(f"{'='*40}")
     
-    # Re-initialize storage for EACH SNR level
+    # Re-initialize storage for EACH Pt level
     est_th = np.full((num_samples_to_run, K_eff), np.nan)
     est_r = np.full((num_samples_to_run, K_eff), np.nan)
     est_v = np.full((num_samples_to_run, K_eff), np.nan)
@@ -152,8 +157,19 @@ for snr_db in snr_db_test_list:
     matched_r = np.full((num_samples_to_run, K_eff), np.nan)
     matched_v = np.full((num_samples_to_run, K_eff), np.nan)
 
+    # >>> Calculate Thermal Noise Standard Deviation (Fixed for current system BW) <<<
+    # Noise Power (Watts) = k * T * B
+    # Convert to mW by multiplying by 1000.0
+    noise_pwr_mw = K_BOLTZMANN * T_NOISE_KELVIN * BW * 1000.0
+    # For complex noise, variance is split between real and imag parts: sigma^2 = P_noise / 2
+    noise_std = math.sqrt(noise_pwr_mw / 2.0)
+    
+    # >>> Calculate Signal Scaling Factor based on Pt <<<
+    pt_mw = 10**(pt_dbm / 10.0)
+    pt_scale_factor = math.sqrt(pt_mw)
+
     iter_loader = islice(test_loader, num_samples_to_run)
-    pbar = tqdm(enumerate(iter_loader), total=num_samples_to_run, desc=f"SNR={snr_db}dB", leave=True)
+    pbar = tqdm(enumerate(iter_loader), total=num_samples_to_run, desc=f"Pt={pt_dbm}dBm", leave=True)
     
     for idx, batch in pbar:
         try:
@@ -165,13 +181,15 @@ for snr_db in snr_db_test_list:
         
         true_th[idx] = gt_th[0]; true_r[idx] = gt_r[0]; true_v[idx] = gt_v[0]
 
-        # --- Add Noise ---
-        sig_pwr = torch.mean(torch.abs(clean_echo)**2, dim=(1, 2), keepdim=True)
-        snr_lin = 10**(snr_db / 10.0)
-        noise_pwr = sig_pwr / snr_lin
-        noise_std = torch.sqrt(noise_pwr / 2.0)
-        noise = (torch.randn_like(clean_echo.real) + 1j * torch.randn_like(clean_echo.imag)) * noise_std
-        y_noisy = clean_echo + noise
+        # --- MODIFIED: Add Noise using Pt and Thermal Noise ---
+        # 1. Scale clean echo by sqrt(Pt)
+        scaled_echo = clean_echo * pt_scale_factor
+        
+        # 2. Generate thermal noise (fixed intensity based on BW/Temp)
+        noise_tensor = (torch.randn_like(scaled_echo.real) + 1j * torch.randn_like(scaled_echo.imag)) * noise_std
+        
+        # 3. Add
+        y_noisy = scaled_echo + noise_tensor
         
         # ======================================================================
         # ALGORITHM: CFAR + MUSIC
@@ -306,14 +324,14 @@ for snr_db in snr_db_test_list:
     rmse_v, p90_v, p95_v = get_stats(valid_v)
     
     res = {
-        "SNR": snr_db,
+        "Pt(dBm)": pt_dbm,  # Modified Key
         "RMSE_Angle": rmse_th, "P90_Angle": p90_th, "P95_Angle": p95_th,
         "RMSE_Range": rmse_r,  "P90_Range": p90_r,  "P95_Range": p95_r,
         "RMSE_Vel":   rmse_v,  "P90_Vel":   p90_v,  "P95_Vel":   p95_v
     }
     overall_results.append(res)
     
-    print(f"Finished SNR={snr_db}dB:")
+    print(f"Finished Pt={pt_dbm}dBm:")
     print(f"  > Angle: RMSE={rmse_th:.4f}, P95={p95_th:.4f}")
     print(f"  > Range: RMSE={rmse_r:.4f}, P95={p95_r:.4f}")
 
@@ -321,12 +339,12 @@ for snr_db in snr_db_test_list:
 # 3. Final Grand Summary
 # ==============================================================================
 print("\n" + "="*100)
-print("FINAL PERFORMANCE SUMMARY (ALL SNRs)")
+print("FINAL PERFORMANCE SUMMARY (ALL Pt Levels)")
 print("="*100)
 df_res = pd.DataFrame(overall_results)
 # Columns in specific order
 cols = [
-    "SNR", 
+    "Pt(dBm)", 
     "RMSE_Angle", "P90_Angle", "P95_Angle",
     "RMSE_Range", "P90_Range", "P95_Range",
     "RMSE_Vel",   "P90_Vel",   "P95_Vel"
