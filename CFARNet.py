@@ -102,38 +102,71 @@ class ChunkedEchoDataset(Dataset):
         except Exception as e: print(f"Error loading index {index}: {e}"); traceback.print_exc(); raise
 
 # --- Angle Calculation Helper ---
-def calculate_angle_for_m(m_idx, f_scs, BW, fc, phi_start_deg, phi_end_deg):
-    # Check for invalid index first
-    if m_idx < 0:
-        return np.nan
+def calculate_angle_for_m(m_idx, f_scs, BW, f0,fc, phi_start_deg, phi_end_deg):
+    """
+    Calculates the beam angle corresponding to a given subcarrier index m_idx.
+    Args:
+        m_idx (int): The 0-based subcarrier index (0 to M).
+        f_scs (float): Subcarrier spacing.
+        BW (float): Bandwidth.
+        fc (float): Center frequency.
+        phi_start_deg (float): Start angle for rainbow beam (degrees).
+        phi_end_deg (float): End angle for rainbow beam (degrees).
+    Returns:
+        float: Calculated angle in degrees. Returns NaN if calculation fails.
+    """
+    fm_base = m_idx * f_scs + f0 # Make sure fm includes f0 offset if needed by formula
+    # Check for invalid fm (including zero or negative based on original logic's continue)
+    if fm_base <= 1e-9: return np.nan # Use a small epsilon instead of direct <= 0
+    # Check for denominator close to zero
+    denom = BW * (fm_base) # Simplified based on typical rainbow beam formulas
+    if abs(denom) < 1e-9: return np.nan
 
-    # Calculate fm_base and term_den only if m_idx is valid
-    fm_base = m_idx * f_scs
-    term_den = BW * (fm_base + fc)
+    # Revisit the formula - standard linear mapping is simpler usually
+    # Linear interpolation based on frequency index relative to total bandwidth
+    fraction = (fm_base - f0) / BW if BW > 1e-9 else 0.5 # Handle BW=0 case
+    fraction = np.clip(fraction, 0.0, 1.0)
+    angle_rad = np.deg2rad(phi_start_deg) * (1 - fraction) + np.deg2rad(phi_end_deg) * fraction
 
-    # Check for near-zero denominator
-    if abs(term_den) < 1e-12:
-        return np.nan
+    fm_for_calc = m_idx * f_scs # Use frequency relative to start f0 for BW calculations?
+    
+    fm_abs = f0 + m_idx * f_scs
+    if fm_abs <= 1e-9: return np.nan
 
-    # Proceed with angle calculation
-    term1_num = (BW - fm_base) * fc
-    term2_num = (BW + fc) * fm_base
-    term1 = (term1_num / term_den) * np.sin(np.deg2rad(phi_start_deg))
-    term2 = (term2_num / term_den) * np.sin(np.deg2rad(phi_end_deg))
-    arcsin_arg = np.clip(term1 + term2, -1.0, 1.0)
+    denom_orig = BW * fm_abs # Original calculation used fm, let's stick to that
+    if abs(denom_orig) < 1e-9: return np.nan
+
+    # term1_num = (BW) * f0 
+    
+    fm_calc = m_idx * f_scs # Use the frequency offset from f0
+
+
+    denom = BW * (fm_calc + f0)
+                              
+    if abs(denom) < 1e-9: return np.nan
+
+    term1_num = (BW - fm_calc) * f0 # Use fc as in code
+    term1 = (term1_num / denom) * np.sin(np.deg2rad(phi_start_deg))
+
+    term2_num = (BW + f0) * fm_calc # Use fc and fm_calc (offset)
+    term2 = (term2_num / denom) * np.sin(np.deg2rad(phi_end_deg))
+
+    arcsin_arg = term1 + term2
+   
+    arcsin_arg = np.clip(arcsin_arg, -1.0, 1.0)
+
     try:
-        angle_value = np.rad2deg(np.arcsin(arcsin_arg))
-    except ValueError:
-        return np.nan
-
-    # Return NaN if result is complex (shouldn't happen with clip, but safer)
-    return angle_value if not np.iscomplex(angle_value) else np.nan
+        angle_rad = np.arcsin(arcsin_arg)
+        angle_value = np.rad2deg(angle_rad)
+        if np.isnan(angle_value): return np.nan # Should not happen after clip, but safe check
+    except ValueError: return np.nan # Should not happen after clip
+    return angle_value
 
 # --- Main Test Function ---
 def main_test():
     # --- Argument Parsing ---
     parser = argparse.ArgumentParser(description='CNN+MUSIC Parameter Estimation with Matching')
-    parser.add_argument('--pt_dbm', type=float, default=30.0, help='Transmit Power (dBm)')
+    parser.add_argument('--pt_dbm', type=float, default=40.0, help='Transmit Power (dBm)')
     parser.add_argument('--cuda_device', type=str, default='0', help='CUDA device ID ("0", "1", ...) or "cpu"')
     parser.add_argument('--data_dir', type=str, required=True, help='Data directory')
     parser.add_argument('--model_dir', type=str, required=True, help='CNN model directory')
@@ -233,7 +266,7 @@ def main_test():
     # --- MUSIC Parameters ---
     sidelobe_window = 10
     v_search_range = np.linspace(-10.5, 10.5, 2001) # Adjust as needed
-    r_search_range = np.arange(34.5, 200.5, 0.01)   # Adjust as needed
+    r_search_range = np.arange(9.5, 100.5, 0.01)   # Adjust as needed
 
     # --- Main Processing Loop ---
     print(f"\nStarting processing for {num_samples_to_process} test samples (CNN+MUSIC)...") # English print
@@ -279,7 +312,7 @@ def main_test():
                 m_peak_pred = predicted_indices_np[k_idx]
 
                 # 4.1 Angle Estimation
-                angle_value = calculate_angle_for_m(m_peak_pred, f_scs, BW, fc, phi_start_deg, phi_end_deg)
+                angle_value = calculate_angle_for_m(m_peak_pred, f_scs, BW, f0,fc, phi_start_deg, phi_end_deg)
                 est_theta_raw[sample_idx_counter, k_idx] = angle_value
 
                 # 4.2 R/V Estimation (MUSIC) - Use rank=1 & normalization

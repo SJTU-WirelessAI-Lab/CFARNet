@@ -9,7 +9,7 @@ import torch # Import torch globally now
 from tqdm import tqdm
 import traceback 
 import gc 
-f0 = 28e9
+f0 = 77e9
 
 def initial_rainbow_beam_ULA_YOLO(N, d, BW, f_scs, fm_list, phi_1, phi_M):
     """
@@ -99,7 +99,7 @@ def compute_echo_from_factors_optimized(
 
     # 2) Calculate BF_t_all, BF_r_all: shape [B, M, Nt]
     BF_t_all = torch.exp(1j * phase_t).to(dtype)/math.sqrt(Nt)  # [B,M,Nt]
-    BF_r_all = torch.exp(1j * phase_r).to(dtype)/math.sqrt(Nt)  # [B,M,Nt]
+    BF_r_all = torch.exp(1j * phase_r).to(dtype)/math.sqrt(Nt)
 
     # 3) Initialize echo
     echo = torch.zeros((B, Ns, M), dtype=dtype, device=device)
@@ -168,14 +168,14 @@ def calculate_angle_for_m(m_idx, f_scs, BW, fc, phi_start_deg, phi_end_deg):
     fm_calc = m_idx * f_scs # Use the frequency offset from f0
 
 
-    denom = BW * (fm_calc + fc)
+    denom = BW * (fm_calc + f0)
                               
     if abs(denom) < 1e-9: return np.nan
 
-    term1_num = (BW - fm_calc) * fc # Use fc as in code
+    term1_num = (BW - fm_calc) * f0 # Use fc as in code
     term1 = (term1_num / denom) * np.sin(np.deg2rad(phi_start_deg))
 
-    term2_num = (BW + fc) * fm_calc # Use fc and fm_calc (offset)
+    term2_num = (BW + f0) * fm_calc # Use fc and fm_calc (offset)
     term2 = (term2_num / denom) * np.sin(np.deg2rad(phi_end_deg))
 
     arcsin_arg = term1 + term2
@@ -212,7 +212,7 @@ def find_closest_m_idx(target_angle_deg, angles_for_all_m):
     return int(best_m_idx)
 
 
-def main(sample_num=1, chunk_size=500, experiment_name='moving_target_v2logic_chunked', random_trajectory_flag=0):
+def main(sample_num=5000, chunk_size=500, experiment_name='moving_target_v2logic_chunked', random_trajectory_flag=0):
     """
     Generates moving target dataset (based on V2 script's logic/params)
     with chunked saving, m_peak indices, and calculated echo signals. VECTORIZED VERSION.
@@ -240,7 +240,7 @@ def main(sample_num=1, chunk_size=500, experiment_name='moving_target_v2logic_ch
 
     # ===== System Parameters (Matching V2 Script Logic) =====
     Nt = 128; Nr = 128; c = 3e8
-    f0 = 28e9        # Start frequency
+    # f0 = 220e9        # Start frequency
     BW = 1e9          # Bandwidth Δf
     M = 2048 - 1      # Highest subcarrier index (0 to M) -> M+1 total subcarriers
     f_scs = BW / M    # Subcarrier spacing
@@ -259,7 +259,7 @@ def main(sample_num=1, chunk_size=500, experiment_name='moving_target_v2logic_ch
 
     # Trajectory Params
     theta_min_deg = -60; theta_max_deg = 60
-    r_min = 5; r_max = 100
+    r_min = 10; r_max = 100
     min_speed = 3.6; max_speed = 36 # Assuming m/s
 
     # Subcarrier Frequencies (V2 logic: M+1 frequencies)
@@ -376,36 +376,17 @@ def main(sample_num=1, chunk_size=500, experiment_name='moving_target_v2logic_ch
 
             # --- Calculate alphaVal_k for the chunk (factors) ---
             r_initial_safe = r_initial_chunk + 1e-12
-            rcs=0.1
+            rcs = 0.1
             alphaVal_k_chunk = np.sqrt((lambda_c**2 *rcs/ (4*np.pi)**3)) / (r_initial_safe**2) # Shape [B, K]
-            
             alphaVal_k_chunk[invalid_sample_mask, :] = 0
 
             # --- Vectorized Array Vector Calculation (factors) ---
             theta_initial_rad_chunk = np.deg2rad(theta_initial_chunk) # Shape [B, K]
             sin_theta_chunk = np.sin(theta_initial_rad_chunk)         # Shape [B, K]
-            # term_array = (phase_const_array *
-            #               fm_list[np.newaxis, :, np.newaxis, np.newaxis] *
-            #               sin_theta_chunk[:, np.newaxis, :, np.newaxis] *
-            #               idx_antenna[np.newaxis, np.newaxis, np.newaxis, :])
-            linear_term = (phase_const_array *
-               fm_list[np.newaxis, :, np.newaxis, np.newaxis] *
-               sin_theta_chunk[:, np.newaxis, :, np.newaxis] * # 对应 $d \cos \theta_k$ (根据您的约定)
-               idx_antenna[np.newaxis, np.newaxis, np.newaxis, :])
-
-            # --- 2. 非线性项 (Spherical Wave Correction) ---
-            r_k_array = r_const_chunk # Shape [B, K]
-            cos_sq_theta_chunk = np.square(np.cos(theta_initial_rad_chunk)) # Shape [B, K]
-            nonlinear_term = (phase_const_array *
-                            fm_list[np.newaxis, :, np.newaxis, np.newaxis] *
-                            (d / 2) * 
-                            np.square(idx_antenna)[np.newaxis, np.newaxis, np.newaxis, :] * # x_n^2
-                            cos_sq_theta_chunk[:, np.newaxis, :, np.newaxis] / # $\sin^2\theta_k$
-                            r_k_array[:, np.newaxis, :, np.newaxis] # $1/r_k$
-                            )
-
-            # --- 3. 完整相位项 (带二阶修正) ---
-            term_array = linear_term - nonlinear_term
+            term_array = (phase_const_array *
+                          fm_list[np.newaxis, :, np.newaxis, np.newaxis] *
+                          sin_theta_chunk[:, np.newaxis, :, np.newaxis] *
+                          idx_antenna[np.newaxis, np.newaxis, np.newaxis, :])
             array_vector_chunk = np.exp(term_array, dtype=np.complex64)
             array_vector_chunk[:, invalid_m_mask, :, :] = 0
             array_vector_chunk[invalid_sample_mask, :, :, :] = 0
@@ -527,7 +508,7 @@ def main(sample_num=1, chunk_size=500, experiment_name='moving_target_v2logic_ch
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate moving target data (V2 Logic, VECTORIZED Chunked Saving + m_peak + Echo)') # Updated description
-    parser.add_argument('--samples', type=int, default=1, help='Number of samples')
+    parser.add_argument('--samples', type=int, default=50000, help='Number of samples')
     parser.add_argument('--chunk', type=int, default=500, help='Number of samples saved per chunk file (Reduced default for testing echo gen)') # Adjusted default
     parser.add_argument('--name', type=str, default='moving_target_v2logic_chunked_vectorized_echo', help='Experiment name') # Updated default name
     parser.add_argument('--random', type=int, default=0, choices=[0, 1], help='Trajectory generation mode (0: ensure angle difference, 1: completely random)')
