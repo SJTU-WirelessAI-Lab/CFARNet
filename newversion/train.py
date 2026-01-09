@@ -16,6 +16,25 @@ import sys
 K_BOLTZMANN = 1.38e-23
 T_NOISE_KELVIN = 290 
 
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=2, gamma=4, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        bce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
+        pt = torch.exp(-bce_loss)
+        focal_loss = self.alpha * (1-pt)**self.gamma * bce_loss
+        
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+
 class ChunkedEchoDataset(Dataset):
     """Simple dataset loader for chunked .npy files."""
     def __init__(self, data_root, start_idx, end_idx, expected_k):
@@ -190,7 +209,7 @@ def main():
     # Model & Opt
     model = IndexPredictionCNN(M_plus_1, Ns).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
-    criterion = nn.BCEWithLogitsLoss()
+    criterion = FocalLoss(alpha=2, gamma=4)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     # Power Scaling Factors
@@ -227,7 +246,7 @@ def main():
             # Smooth Target
             smooth_target = torch.zeros_like(logits)
             for b in range(logits.shape[0]):
-                smooth_target[b] = create_gaussian_target(target[b], M_plus_1, 1.0, device)
+                smooth_target[b] = create_gaussian_target(target[b], M_plus_1, 0.8, device)
             
             loss = criterion(logits, smooth_target)
             
@@ -258,7 +277,7 @@ def main():
                 # Val Loss
                 smooth_target = torch.zeros_like(logits)
                 for b in range(logits.shape[0]):
-                    smooth_target[b] = create_gaussian_target(target[b], M_plus_1, 1.0, device)
+                    smooth_target[b] = create_gaussian_target(target[b], M_plus_1, 0.8, device)
                 val_loss_accum += criterion(logits, smooth_target).item()
                 
                 # Val TopHit
