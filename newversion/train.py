@@ -209,7 +209,7 @@ def main():
     # Model & Opt
     model = IndexPredictionCNN(M_plus_1, Ns).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
-    criterion = FocalLoss(alpha=2, gamma=4)
+    criterion = nn.BCEWithLogitsLoss()
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     # Power Scaling Factors

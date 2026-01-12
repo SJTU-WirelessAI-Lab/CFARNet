@@ -1,402 +1,251 @@
 # -*- coding: utf-8 -*-
 import subprocess
-import re
 import os
 import sys
-import time
+import glob
+import re
+import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import queue
-from concurrent.futures import ThreadPoolExecutor
 
-# ================= 配置区域 =================
-# 脚本文件名
-SCRIPT_GEN = "data_generation.py"
+# ================= Configuration =================
 SCRIPT_TRAIN = "train.py"
-SCRIPT_TEST_YOLO = "YOLO_baseline.py"      # YOLO baseline 测试脚本
-SCRIPT_TEST_CFAR = "CFARNet.py"   # CFARNet 测试脚本
+SCRIPT_TEST_YOLO = "YOLO_baseline.py"
+SCRIPT_TEST_CFAR = "CFARNet.py"
 
-# 实验参数列表
-K_LIST = [3]           # 用户数量列表
-D_LIST = [1.5, 3.0, 5, 10]         # 最小角度间隔列表 (Delta Phi)
-PT_LIST = [40, 50, 60]  # 发射功率列表
+# User Request:
+# K=3: Pts [45, 50, 55, 60]
+# K=1, 2, 4, 5: Pt [50]
+# Output: bce0112 folder
 
-# 硬件资源
-CUDA_DEVICES = [0, 1, 2, 3, 4, 5, 6, 7] # 可用的 GPU ID 列表
+OUTPUT_ROOT = "bce0112"
+DATA_ROOT = "data"
 
-# 通用参数
-SAMPLES = 50000        # 生成数据量
-EPOCHS = 60            # 训练轮数
-BATCH_SIZE = 64
-NUM_TEST_SAMPLES = 7500
-# ===========================================
+# Hardware
+CUDA_DEVICES = [ 2, 3,4, 5, 6,7]
+# CUDA_DEVICES = [0] # Debug
 
-# GPU 资源队列
+# Training/Testing Params
+EPOCHS = 60
+BATCH_SIZE = 128
+NUM_TEST_SAMPLES = 7500 # As per previous pipeline
+
+# ===============================================
+
 gpu_queue = queue.Queue()
 for device_id in CUDA_DEVICES:
     gpu_queue.put(device_id)
 
 def run_command(command, log_file_path):
-    """
-    执行命令并将输出实时写入指定的日志文件。
-    """
-    # 确保日志文件的目录存在
-    log_dir = os.path.dirname(log_file_path)
-    if log_dir and not os.path.exists(log_dir):
-        try:
-            os.makedirs(log_dir, exist_ok=True)
-        except:
-            pass # 防止并发创建报错
-
+    os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
     with open(log_file_path, "w", encoding='utf-8') as f:
         f.write(f"CMD: {command}\n{'='*40}\n")
         f.flush()
-        
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            shell=True,
-            text=True,
-            encoding='utf-8',
-            errors='replace'
-        )
-        
-        full_output = []
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True, text=True)
         for line in process.stdout:
             f.write(line)
             f.flush()
-            full_output.append(line)
-            
         process.wait()
-        
         if process.returncode != 0:
-            err_msg = f"\n[ERROR] Command failed with return code {process.returncode}.\n"
-            f.write(err_msg)
-            print(f"Error executing: {command}. See log: {log_file_path}")
+            f.write(f"\n[ERROR] Return Code {process.returncode}")
             raise RuntimeError(f"Command failed: {command}")
 
-    return "".join(full_output)
+def get_k_from_path(path):
+    # Try to parse from folder name first "auto_pipeline_k3_..."
+    match = re.search(r'_k(\d+)_', os.path.basename(path))
+    if match:
+        return int(match.group(1))
+    # Fallback to loading system_params
+    try:
+        p = np.load(os.path.join(path, "system_params.npz"))
+        return int(p['K'])
+    except:
+        return None
 
-def parse_gen_path(output):
-    """从生成脚本输出中抓取数据路径"""
-    match = re.search(r"Dataset generation completed, path:\s*(.+)", output)
-    if match: return match.group(1).strip()
-    match = re.search(r"Data will be saved to:\s*(.+)", output)
-    if match: return match.group(1).strip()
-    raise ValueError("Critical Error: Could not capture DATA path from generation output.")
-
-def worker_routine(k, d, pt, gpu_id, data_path):
-    """
-    单个 Worker 的工作流程：训练 -> YOLO测试 -> CFARNet测试
-    """
-    # 创建独立的实验子文件夹
-    exp_subfolder = os.path.join(data_path, f"experiment_pt{int(pt)}")
-    os.makedirs(exp_subfolder, exist_ok=True)
-
-    print(f"   [Worker Start] Pt={pt}dBm on GPU {gpu_id} | Data: {os.path.basename(data_path)} | Save: {os.path.basename(exp_subfolder)}")
+def train_task(dataset_path, pt, gpu_id):
+    dataset_name = os.path.basename(dataset_path)
+    save_dir = os.path.join(OUTPUT_ROOT, dataset_name, f"pt{pt}")
+    os.makedirs(save_dir, exist_ok=True)
     
-    # 定义日志文件 (保存在子文件夹下)
-    log_train = os.path.join(exp_subfolder, f"log_train_pt{int(pt)}.txt")
-    log_yolo = os.path.join(exp_subfolder, f"log_test_yolo_pt{int(pt)}.txt")
-    log_cfar = os.path.join(exp_subfolder, f"log_test_cfarnet_pt{int(pt)}.txt")
+    log_file = os.path.join(save_dir, "log_train.txt")
+    model_path = os.path.join(save_dir, f"model_pt{pt}_best.pt")
+    
+    # We need K for training arg
+    k = get_k_from_path(dataset_path)
+    if k is None: raise ValueError(f"Could not determine K for {dataset_path}")
+
+    print(f"[Train] Start K={k} Pt={pt} on GPU {gpu_id} | {dataset_name}")
+    
+    cmd = (
+        f"CUDA_VISIBLE_DEVICES={gpu_id} python {SCRIPT_TRAIN} "
+        f"--data_dir \"{dataset_path}\" "
+        f"--save_dir \"{save_dir}\" "
+        f"--pt_dbm {pt} "
+        f"--epochs {EPOCHS} "
+        f"--batch_size {BATCH_SIZE} "
+        f"--cuda_device 0 "
+        f"--max_targets {k} "
+        f"--num_test_samples {NUM_TEST_SAMPLES} "
+        f"--test_set_mode first"
+    )
     
     try:
-        # 1. 训练 (Train)
-        cmd_train = (
-            f"python {SCRIPT_TRAIN} "
-            f"--data_dir \"{data_path}\" "
-            f"--save_dir \"{exp_subfolder}\" "
-            f"--pt_dbm {pt} "
-            f"--epochs {EPOCHS} "
-            f"--batch_size {BATCH_SIZE} "
-            f"--cuda_device {gpu_id} "
-            f"--max_targets {k} "
-            f"--num_test_samples {NUM_TEST_SAMPLES} "
-            f"--test_set_mode first"
-        )
-        run_command(cmd_train, log_train)
-        
-        model_weight_path = os.path.join(exp_subfolder, f"model_pt{int(pt)}_best.pt")
-
-        # 2. YOLO Baseline 测试
-        cmd_yolo = (
-            f"python {SCRIPT_TEST_YOLO} "
-            f"--data_dir \"{data_path}\" "
-            f"--save_dir \"{exp_subfolder}\" "
-            f"--pt_dbm {pt} "
-            f"--cuda_device {gpu_id} "
-            f"--num_test_samples {NUM_TEST_SAMPLES} "
-            f"--max_targets {k} "
-            f"--test_set_mode first"
-        )
-        run_command(cmd_yolo, log_yolo)
-
-        # 3. CFARNet 测试
-        cmd_cfar = (
-            f"python {SCRIPT_TEST_CFAR} "
-            f"--data_dir \"{data_path}\" "
-            f"--model_path \"{model_weight_path}\" "
-            f"--save_dir \"{exp_subfolder}\" "
-            f"--pt_dbm {pt} "
-            f"--cuda_device {gpu_id} "
-            f"--num_test_samples {NUM_TEST_SAMPLES} "
-            f"--max_targets {k} "
-            f"--test_set_mode first"
-        )
-        run_command(cmd_cfar, log_cfar)
-
-        print(f"   [Worker Done] Pt={pt}dBm finished successfully.")
-        return True
-
+        run_command(cmd, log_file)
+        if not os.path.exists(model_path):
+             raise FileNotFoundError("Model not generated")
+        print(f"[Train] Done  K={k} Pt={pt}")
+        return model_path
     except Exception as e:
-        print(f"   [Worker Fail] Pt={pt}dBm failed: {e}")
-        return False
+        print(f"[Train] Fail  K={k} Pt={pt}: {e}")
+        return None
 
-def worker_wrapper(k, d, pt, data_path):
-    """
-    包装器：负责申请和释放 GPU 资源
-    """
-    gpu_id = gpu_queue.get() # 阻塞直到有空闲 GPU
+def test_task(dataset_path, model_path, pt, gpu_id):
+    dataset_name = os.path.basename(dataset_path)
+    save_dir = os.path.join(OUTPUT_ROOT, dataset_name, f"pt{pt}")
+    k = get_k_from_path(dataset_path)
+    
+    print(f"[Test] Start K={k} Pt={pt} on GPU {gpu_id}")
+    
+    # YOLO
+    log_yolo = os.path.join(save_dir, "log_test_yolo.txt")
+    cmd_yolo = (
+        f"CUDA_VISIBLE_DEVICES={gpu_id} python {SCRIPT_TEST_YOLO} "
+        f"--data_dir \"{dataset_path}\" "
+        f"--save_dir \"{save_dir}\" "
+        f"--pt_dbm {pt} "
+        f"--cuda_device 0 "
+        f"--num_test_samples {NUM_TEST_SAMPLES} "
+        f"--max_targets {k} "
+        f"--test_set_mode first"
+    )
+    
+    # CFARNet
+    log_cfar = os.path.join(save_dir, "log_test_cfarnet.txt")
+    cmd_cfar = (
+        f"CUDA_VISIBLE_DEVICES={gpu_id} python {SCRIPT_TEST_CFAR} "
+        f"--data_dir \"{dataset_path}\" "
+        f"--model_path \"{model_path}\" "
+        f"--save_dir \"{save_dir}\" "
+        f"--pt_dbm {pt} "
+        f"--cuda_device 0 "
+        f"--num_test_samples {NUM_TEST_SAMPLES} "
+        f"--max_targets {k} "
+        f"--test_set_mode first"
+    )
+    
     try:
-        worker_routine(k, d, pt, gpu_id, data_path)
+        run_command(cmd_yolo, log_yolo)
+        run_command(cmd_cfar, log_cfar)
+        print(f"[Test] Done  K={k} Pt={pt}")
+    except Exception as e:
+        print(f"[Test] Fail  K={k} Pt={pt}: {e}")
+
+def pipeline_worker(dataset_path, pt):
+    gpu_id = gpu_queue.get()
+    try:
+        # Train
+        model_path = train_task(dataset_path, pt, gpu_id)
+        if model_path:
+            # Test
+            test_task(dataset_path, model_path, pt, gpu_id)
     finally:
-        gpu_queue.put(gpu_id) # 归还 GPU
+        gpu_queue.put(gpu_id)
+
+def summarize_results():
+    print("\n[Summary] Generating Final Report...")
+    report_path = os.path.join(OUTPUT_ROOT, "final_summary.txt")
+    
+    results = []
+    
+    # Search for all test logs
+    # Structure: bce0112/<dataset>/ptXX/log_test_*.txt
+    
+    dataset_dirs = glob.glob(os.path.join(OUTPUT_ROOT, "*"))
+    for d_dir in sorted(dataset_dirs):
+        if not os.path.isdir(d_dir): continue
+        dataset_name = os.path.basename(d_dir)
+        
+        pt_dirs = glob.glob(os.path.join(d_dir, "pt*"))
+        for p_dir in sorted(pt_dirs):
+            pt_str = os.path.basename(p_dir) # pt50
+            
+            # Read YOLO Log
+            yolo_log = os.path.join(p_dir, "log_test_yolo.txt")
+            cfar_log = os.path.join(p_dir, "log_test_cfarnet.txt")
+            
+            row = {'name': dataset_name, 'pt': pt_str, 'yolo_90': 'N/A', 'cfar_90': 'N/A'}
+            
+            # Parse YOLO
+            if os.path.exists(yolo_log):
+                with open(yolo_log, 'r') as f:
+                    content = f.read()
+                    # Look for "2D Pos (m)  : ... | 90%=X.XXXX"
+                    match = re.search(r'2D Pos \(m\)\s*:\s*RMSE=[\d\.]+\s*\|\s*90%=([\d\.]+)', content)
+                    if match: row['yolo_90'] = match.group(1)
+            
+            # Parse CFARNet
+            if os.path.exists(cfar_log):
+                with open(cfar_log, 'r') as f:
+                    content = f.read()
+                    # Look for "2D Pos (m)  : ... | 90%=X.XXXX"
+                    match = re.search(r'2D Pos \(m\)\s*:\s*RMSE=[\d\.]+\s*\|\s*90%=([\d\.]+)', content)
+                    if match: row['cfar_90'] = match.group(1)
+            
+            results.append(row)
+            
+    with open(report_path, 'w') as f:
+        f.write(f"{'Dataset':<50} | {'Pt':<5} | {'YOLO 90% Err':<12} | {'CFARNet 90% Err':<12}\n")
+        f.write("-" * 90 + "\n")
+        for r in results:
+            f.write(f"{r['name']:<50} | {r['pt']:<5} | {r['yolo_90']:<12} | {r['cfar_90']:<12}\n")
+            
+    print(f"[Summary] Report saved to {report_path}")
+    # print(open(report_path).read()) # Avoid printing huge text in terminal if many entries
 
 def main():
-    executor = ThreadPoolExecutor(max_workers=len(CUDA_DEVICES))
-    futures = []
-
-    for k in K_LIST:
-        for d in D_LIST:
-            print(f"\n{'#'*60}")
-            print(f"Phase 1: Generating Data for K={k}, D={d}")
-            print(f"{'#'*60}")
+    if not os.path.exists(OUTPUT_ROOT):
+        os.makedirs(OUTPUT_ROOT)
+        
+    tasks = []
+    
+    # 1. Discover Datasets
+    data_folders = [f for f in glob.glob(os.path.join(DATA_ROOT, "auto_pipeline_*")) if os.path.isdir(f)]
+    
+    print(f"Found {len(data_folders)} datasets in {DATA_ROOT}")
+    
+    for d_path in data_folders:
+        k = get_k_from_path(d_path)
+        if k is None:
+            print(f"Skipping {d_path}: Unknown K")
+            continue
             
-            gen_log_file = f"pipeline_gen_k{k}_d{d}.log"
-            cmd_gen = (
-                f"python {SCRIPT_GEN} "
-                f"--samples {SAMPLES} "
-                f"--chunk 500 "
-                f"--num_targets {k} "
-                f"--min_angle_diff {d} "
-                f"--name auto_pipeline"
-            )
+        pts_to_run = []
+        if k == 3:
+            pts_to_run = [45, 50, 55, 60]
+        elif k in [1, 2, 4, 5]:
+            pts_to_run = [50]
+        else:
+            print(f"Skipping {d_path}: K={k} not in target list")
+            continue
             
+        for pt in pts_to_run:
+            tasks.append((d_path, pt))
+            
+    print(f"Total Tasks: {len(tasks)}")
+    
+    # 2. Execute
+    with ThreadPoolExecutor(max_workers=len(CUDA_DEVICES)) as executor:
+        futures = {executor.submit(pipeline_worker, d, p): (d, p) for d, p in tasks}
+        
+        for f in as_completed(futures):
+            d, p = futures[f]
             try:
-                gen_output = run_command(cmd_gen, gen_log_file)
-                data_path = parse_gen_path(gen_output)
-                print(f">>> Data generated at: {data_path}")
-                try:
-                    os.rename(gen_log_file, os.path.join(data_path, "generation_log.txt"))
-                except: pass
-
-                print(f">>> Submitting {len(PT_LIST)} tasks for K={k}, D={d}...")
-                for pt in PT_LIST:
-                    future = executor.submit(worker_wrapper, k, d, pt, data_path)
-                    futures.append(future)
-
+                f.result()
             except Exception as e:
-                print(f">>> Generation Failed for K={k}, D={d}. Skipping this batch. Error: {e}")
-                continue
+                print(f"Task Failed: {os.path.basename(d)} Pt={p} -> {e}")
 
-    print(f"\n{'#'*60}")
-    print(f"All tasks submitted. Waiting for completion...")
-    print(f"{'#'*60}")
-    
-    for f in futures:
-        try:
-            f.result()
-        except Exception as e:
-            print(f"Task failed with exception: {e}")
-
-    print("\n>>> All Pipeline Tasks Completed.")
-
-if __name__ == "__main__":
-    main()
-
-def run_command(command, log_file_path):
-    """
-    执行命令并将输出实时写入指定的日志文件。
-    """
-    # 确保日志文件的目录存在
-    log_dir = os.path.dirname(log_file_path)
-    if log_dir and not os.path.exists(log_dir):
-        try:
-            os.makedirs(log_dir, exist_ok=True)
-        except:
-            pass # 防止并发创建报错
-
-    with open(log_file_path, "w", encoding='utf-8') as f:
-        f.write(f"CMD: {command}\n{'='*40}\n")
-        f.flush()
-        
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            shell=True,
-            text=True,
-            encoding='utf-8',
-            errors='replace'
-        )
-        
-        full_output = []
-        for line in process.stdout:
-            # 这里的 print 可以注释掉，如果不想在主控制台看到太多刷屏
-            # sys.stdout.write(line) 
-            f.write(line)
-            f.flush()
-            full_output.append(line)
-            
-        process.wait()
-        
-        if process.returncode != 0:
-            err_msg = f"\n[ERROR] Command failed with return code {process.returncode}.\n"
-            f.write(err_msg)
-            print(f"Error executing: {command}. See log: {log_file_path}")
-            raise RuntimeError(f"Command failed: {command}")
-
-    return "".join(full_output)
-
-def parse_gen_path(output):
-    """从生成脚本输出中抓取数据路径"""
-    # 匹配: Dataset generation completed, path: /path/to/data
-    match = re.search(r"Dataset generation completed, path:\s*(.+)", output)
-    if match: return match.group(1).strip()
-    # 备用匹配
-    match = re.search(r"Data will be saved to:\s*(.+)", output)
-    if match: return match.group(1).strip()
-    raise ValueError("Critical Error: Could not capture DATA path from generation output.")
-
-def worker_routine(k, d, pt, gpu_id, data_path):
-    """
-    单个 Worker 的工作流程：训练 -> YOLO测试 -> CFARNet测试
-    """
-    print(f"   [Worker Start] Pt={pt}dBm on GPU {gpu_id} | Data: {os.path.basename(data_path)}")
-    
-    # 定义该 Pt 下的日志文件名 (全部保存在数据文件夹下)
-    log_train = os.path.join(data_path, f"log_train_pt{int(pt)}.txt")
-    log_yolo = os.path.join(data_path, f"log_test_yolo_pt{int(pt)}.txt")
-    log_cfar = os.path.join(data_path, f"log_test_cfarnet_pt{int(pt)}.txt")
-    
-    try:
-        # 1. 训练 (Train)
-        # 注意：这里传入 --save_dir 告诉训练脚本把模型和TopHit日志保存在 data_path 下
-        cmd_train = (
-            f"python {SCRIPT_TRAIN} "
-            f"--data_dir \"{data_path}\" "
-            f"--save_dir \"{data_path}\" "  # 关键：模型保存路径
-            f"--pt_dbm {pt} "
-            f"--epochs {EPOCHS} "
-            f"--batch_size {BATCH_SIZE} "
-            f"--cuda_device {gpu_id} "
-            f"--max_targets {k} "
-            f"--num_test_samples {NUM_TEST_SAMPLES} "
-            f"--test_set_mode first"
-        )
-        run_command(cmd_train, log_train)
-        
-        # 假设训练脚本保存模型的命名规则是固定的，或者在日志里能找到
-        # 这里假设保存为 data_path/model_pt{pt}.pt (需要在 train.py 中配合修改)
-        model_weight_path = os.path.join(data_path, f"model_pt{int(pt)}_best.pt")
-
-        # 2. YOLO Baseline 测试
-        # YOLO 不需要模型权重，只需要数据路径
-        cmd_yolo = (
-            f"python {SCRIPT_TEST_YOLO} "
-            f"--data_dir \"{data_path}\" "
-            f"--save_dir \"{data_path}\" " # 结果保存路径
-            f"--pt_dbm {pt} "
-            f"--cuda_device {gpu_id} "
-            f"--num_test_samples {NUM_TEST_SAMPLES} "
-            f"--max_targets {k} "
-            f"--test_set_mode first"
-        )
-        run_command(cmd_yolo, log_yolo)
-
-        # 3. CFARNet 测试
-        # 需要加载刚才训练好的权重
-        cmd_cfar = (
-            f"python {SCRIPT_TEST_CFAR} "
-            f"--data_dir \"{data_path}\" "
-            f"--model_path \"{model_weight_path}\" " # 加载权重
-            f"--save_dir \"{data_path}\" " # 结果保存路径
-            f"--pt_dbm {pt} "
-            f"--cuda_device {gpu_id} "
-            f"--num_test_samples {NUM_TEST_SAMPLES} "
-            f"--max_targets {k} "
-            f"--test_set_mode first"
-        )
-        run_command(cmd_cfar, log_cfar)
-
-        print(f"   [Worker Done] Pt={pt}dBm finished successfully.")
-        return True
-
-    except Exception as e:
-        print(f"   [Worker Fail] Pt={pt}dBm failed: {e}")
-        return False
-
-def main():
-    # 外层循环：遍历 K 和 D (每次组合生成一次数据)
-    for k in K_LIST:
-        for d in D_LIST:
-            print(f"\n{'#'*60}")
-            print(f"Phase 1: Generating Data for K={k}, D={d}")
-            print(f"{'#'*60}")
-            
-            # --- 1. 生成数据 ---
-            # 这里的日志先暂存在当前目录，或者你可以指定一个 logs 文件夹
-            gen_log_file = f"pipeline_gen_k{k}_d{int(d)}.log"
-            
-            # 构造生成命令
-            # --name 用于区分文件夹前缀
-            cmd_gen = (
-                f"python {SCRIPT_GEN} "
-                f"--samples {SAMPLES} "
-                f"--chunk 500 "
-                f"--num_targets {k} "
-                f"--min_angle_diff {d} "
-                f"--name auto_pipeline"
-            )
-            
-            try:
-                # 执行生成
-                gen_output = run_command(cmd_gen, gen_log_file)
-                # 获取生成的数据文件夹路径
-                data_path = parse_gen_path(gen_output)
-                print(f">>> Data generated at: {data_path}")
-                
-                # 将生成日志移动到数据文件夹内 (可选，保持整洁)
-                try:
-                    os.rename(gen_log_file, os.path.join(data_path, "generation_log.txt"))
-                except: pass
-
-            except Exception as e:
-                print(f">>> Generation Failed for K={k}, D={d}. Skipping this batch.")
-                continue
-
-            # --- 2. 并行训练与测试 ---
-            print(f"\nPhase 2: Parallel Train/Test for Pt list: {PT_LIST}")
-            print(f"Using GPUs: {CUDA_DEVICES}")
-            
-            # 使用 ThreadPoolExecutor 来并发运行
-            # 注意：Python 的 ThreadPool 足以应对 subprocess 的并发，因为 GIL 不阻塞子进程
-            with ThreadPoolExecutor(max_workers=len(CUDA_DEVICES)) as executor:
-                futures = []
-                
-                # 为每个 Pt 分配任务
-                for i, pt in enumerate(PT_LIST):
-                    # 简单的轮询分配 GPU
-                    gpu_id = CUDA_DEVICES[i % len(CUDA_DEVICES)]
-                    
-                    # 提交任务
-                    future = executor.submit(worker_routine, k, d, pt, gpu_id, data_path)
-                    futures.append(future)
-                
-                # 等待所有 Pt 的任务完成
-                for future in futures:
-                    future.result() # 这里会抛出 worker 内部的异常（如果有）
-
-            print(f"\n>>> Batch K={k}, D={d} Completed. Results in {data_path}")
+    # 3. Summarize
+    summarize_results()
 
 if __name__ == "__main__":
     main()

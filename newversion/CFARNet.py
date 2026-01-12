@@ -101,7 +101,7 @@ def run_music(y_sample, m_peak, M, f_scs, f0):
     """
     Runs simplistic 1D MUSIC for Range and Velocity on the sub-carriers around m_peak.
     """
-    win = 8 # Window size around peak
+    win = 10 # Window size around peak
     m_start = max(0, int(m_peak) - win)
     m_end = min(M, int(m_peak) + win)
     y_sub = y_sample[:, m_start:m_end+1] # [Ns, Subcarriers]
@@ -117,7 +117,7 @@ def run_music(y_sample, m_peak, M, f_scs, f0):
         Un_t = V_t[:, :-1] # Noise subspace (Rank 1 signal assumption)
         
         # Grid search for Velocity
-        v_grid = np.linspace(-15, 15, 200) # m/s
+        v_grid = np.linspace(-15, 15, 400) # m/s
         P_v = []
         t_vec = np.arange(Ns) * (1/f_scs) # Symbol duration is 1/f_scs roughly
         for v in v_grid:
@@ -138,7 +138,7 @@ def run_music(y_sample, m_peak, M, f_scs, f0):
         Un_f = V_f[:, :-1]
         
         # Grid search for Range
-        r_grid = np.linspace(10, 100, 200) # m
+        r_grid = np.linspace(10, 100, 400) # m
         P_r = []
         f_vec = np.arange(K_sub) * f_scs # Relative freq in window
         for r in r_grid:
@@ -223,6 +223,7 @@ def main():
     err_angle_list = []
     err_range_list = []
     err_velo_list = []
+    err_2d_list = []
 
     # 4. Testing Loop
     with torch.no_grad():
@@ -289,7 +290,19 @@ def main():
                 if not np.isnan(est_targets[r, 2]):
                     err_v = np.abs(est_targets[r, 2] - true_targets[c, 2])
                     err_velo_list.append(err_v)
-
+                
+                # 2D Position Error
+                if not np.isnan(est_targets[r, 1]):
+                    ang_pred = est_targets[r, 0]
+                    r_pred = est_targets[r, 1]
+                    ang_true = true_targets[c, 0]
+                    r_true = true_targets[c, 1]
+                    
+                    rad_p = np.deg2rad(ang_pred); rad_t = np.deg2rad(ang_true)
+                    x_p, y_p = r_pred * np.cos(rad_p), r_pred * np.sin(rad_p)
+                    x_t, y_t = r_true * np.cos(rad_t), r_true * np.sin(rad_t)
+                    err_2d = np.sqrt((x_p - x_t)**2 + (y_p - y_t)**2)
+                    err_2d_list.append(err_2d)
     # 5. Statistics & Logging
     def calc_stats(errors):
         if not errors: return 0.0, 0.0, 0.0
@@ -302,6 +315,7 @@ def main():
     rmse_a, p90_a, p95_a = calc_stats(err_angle_list)
     rmse_r, p90_r, p95_r = calc_stats(err_range_list)
     rmse_v, p90_v, p95_v = calc_stats(err_velo_list)
+    rmse_2d, p90_2d, p95_2d = calc_stats(err_2d_list)
 
     log_file = os.path.join(args.save_dir, f"log_test_cfarnet_pt{int(args.pt_dbm)}.txt")
     
@@ -311,6 +325,7 @@ def main():
         f"Angle (deg) : RMSE={rmse_a:.4f} | 90%={p90_a:.4f} | 95%={p95_a:.4f}",
         f"Range (m)   : RMSE={rmse_r:.4f} | 90%={p90_r:.4f} | 95%={p95_r:.4f}",
         f"Velocity(m/s): RMSE={rmse_v:.4f} | 90%={p90_v:.4f} | 95%={p95_v:.4f}",
+        f"2D Pos (m)  : RMSE={rmse_2d:.4f} | 90%={p90_2d:.4f} | 95%={p95_2d:.4f}",
         f"=================================================="
     ]
     
@@ -323,6 +338,7 @@ def main():
     npz_file = os.path.join(args.save_dir, f"errors_cfarnet_pt{int(args.pt_dbm)}.npz")
     np.savez(npz_file, 
              err_angle=err_angle_list,
+             err_2d=err_2d_list,
              err_range=err_range_list, 
              err_velo=err_velo_list,
              pt_dbm=args.pt_dbm)
