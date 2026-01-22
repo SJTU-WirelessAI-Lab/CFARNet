@@ -78,7 +78,7 @@ class ChunkedEchoDataset(Dataset):
         chunk_idx = abs_idx // self.chunk_size
         idx_in_chunk = abs_idx % self.chunk_size
         try:
-            echo_chunk = np.load(os.path.join(self.echoes_dir, f'echo_chunk_{chunk_idx}.npy'))
+            echo_chunk = np.load(os.path.join(self.echoes_dir, f'echo_chunk_{chunk_idx}.npy'), mmap_mode='r')
             return {
                 'echo': torch.from_numpy(echo_chunk[idx_in_chunk]).to(torch.complex64),
                 'm_peak': torch.from_numpy(self.m_peak_targets[index]).to(torch.long)
@@ -155,6 +155,7 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--num_test_samples', type=int, default=0, help="Number of samples reserved for testing")
     parser.add_argument('--test_set_mode', type=str, default='last', choices=['first', 'last'], help="Where test set is located")
+    parser.add_argument('--resume_path', type=str, default=None, help="Path to checkpoint to resume training from")
     args = parser.parse_args()
 
     # Device Setup
@@ -203,11 +204,16 @@ def main():
     
     print(f"[Train] Train Samples: {len(train_ds)} | Val Samples: {len(val_ds)}")
     
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=0, pin_memory=True)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0, pin_memory=True)
 
     # Model & Opt
     model = IndexPredictionCNN(M_plus_1, Ns).to(device)
+    
+    if args.resume_path and os.path.exists(args.resume_path):
+        print(f"[Train] Resuming from checkpoint: {args.resume_path}")
+        model.load_state_dict(torch.load(args.resume_path, map_location=device))
+        
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
     criterion = nn.BCEWithLogitsLoss()
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
@@ -233,10 +239,12 @@ def main():
         model.train()
         train_loss_accum = 0.0
         
-        for batch in train_loader:
+        for i, batch in enumerate(train_loader):
+            if i % 50 == 0:
+                print(f"[Epoch {epoch+1}][Batch {i}/{len(train_loader)}]", flush=True)
             echo = batch['echo'].to(device)
             target = batch['m_peak'].to(device)
-            
+                        
             # Apply Noise & Scale
             noise = (torch.randn_like(echo.real) + 1j*torch.randn_like(echo.imag)) * noise_std
             input_sig = echo * scale_factor + noise
