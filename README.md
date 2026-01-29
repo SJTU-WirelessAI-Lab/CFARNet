@@ -23,13 +23,13 @@ CFARNet aims to provide a complete toolchain for radar signal processing and tar
 | Filename | Main Function Description |
 |----------|---------------------------|
 | `data_generation.py` | Generate echo channel parameters, target trajectories, and system parameters with batch simulation and dataset generation support. |
+| `pipeline.py` | **Process Runner**: Automatically scans generated data, runs training/testing for defined Power levels (Pt), and aggregates results. |
 | `trajectory.py` | Target trajectory generation module supporting various motion patterns and parameter configurations. |
-| `train.py` | Main deep learning model training script supporting CNN training, validation, testing, and visualization. |
+| `train.py` | Main deep learning model training script supporting CNN training (BCE Loss), validation, testing, and visualization. |
 | `CFARNet.py` | CFARNet neural network method implementation for high-resolution multi-target detection (main method from the paper). |
 | `YOLO_baseline.py` | Traditional CFAR+MUSIC baseline method for comparison with the proposed CFARNet approach. |
 | `functions.py` | Core utility function library including dataset loading, signal processing, feature extraction, and evaluation metrics. |
 | `environment.yml` | Conda environment dependency configuration file containing all required packages and versions. |
-| `README.md` | Project documentation. |
 
 ---
 
@@ -47,128 +47,71 @@ pip install tzdata
 pip install huggingface
 ```
 
-### 2. Data Generation
+### 2. Workflow Overview
 
-Generate echo channel parameters and target motion data:
+The standard workflow consists of two main steps:
+1.  **Generate Data**: Create synthetic radar datasets with specific target counts (K) and angle differences (Delta).
+2.  **Run Pipeline**: Execute the automated pipeline which scans for data, trains models, and outputs performance metrics.
 
+---
+
+### Step 1: Data Generation
+
+Use `data_generation.py` to generate datasets. You **must** use the naming convention `auto_pipeline` for the pipeline script to recognize the folders.
+
+**Command Syntax:**
 ```bash
-
-python data_generation.py --samples 5000 --chunk 500 --name my_exp
-
+python data_generation.py --num_targets <K> --min_angle_diff <Delta> --name auto_pipeline --samples 5000
 ```
 
-**Main Parameter Descriptions:**
-- `--sample_num`: Number of samples to generate
-- `--chunk_size`: Number of samples per data chunk
-- `--experiment_name`: Experiment name (for distinguishing data folders)
-- Other parameters see script comments and command line help
+**Examples:**
 
-### 3. Deep Learning Model Training
+*   **1 Target**:
+    ```bash
+    python data_generation.py --num_targets 1 --min_angle_diff 0 --name auto_pipeline
+    ```
+*   **3 Targets, 1 degree separation**:
+    ```bash
+    python data_generation.py --num_targets 3 --min_angle_diff 1 --name auto_pipeline
+    ```
+*   **3 Targets, 10 degrees separation**:
+    ```bash
+    python data_generation.py --num_targets 3 --min_angle_diff 10 --name auto_pipeline
+    ```
+*   **5 Targets, 1 degree separation**:
+    ```bash
+    python data_generation.py --num_targets 5 --min_angle_diff 1 --name auto_pipeline
+    ```
 
-Train CNN and other deep learning models:
+*Note: The script will automatically append the suffix `_k<K>_d<Delta>_<Timestamp>` to the folder name in `data/`.*
 
+---
+
+### Step 2: Run Pipeline
+
+Once data generation is complete, run the `pipeline.py` script. This script acts as a manager; it does **not** generate new data. It scans the `data/` directory for folders matching `auto_pipeline_k*_d*`, and runs the training and evaluation process for pre-defined Power (Pt) levels.
+
+**Command:**
 ```bash
-python train.py --data_dir ./data/my_exp --batch_size 16 --epochs 50 --max_targets 3
+python pipeline.py
 ```
 
-**Main Parameter Descriptions:**
-- `--data_dir`: Directory containing generated data
-- `--batch_size`: Training batch size
-- `--epochs`: Number of training epochs
-- `--max_targets`: Maximum number of targets
-- Other parameters see script comments and command line help
-
-### 4. CFARNet Neural Network Method Testing
-
-Run the proposed CFARNet method:
-
-```bash
-python CFARNet.py --data_dir ./data/my_exp --model_dir ./output/my_exp/models --top_k_cnn 3
-
-```
-
-**Main Parameter Descriptions:**
-- `--data_dir`: Data directory
-- `--model_dir`: Trained model directory
-- `--top_k_cnn`: Top-K peaks from CNN output
-- Other parameters see script comments and command line help
-
-### 5. Traditional CFAR+MUSIC Baseline Testing (Optional)
-
-Compare with traditional CFAR+MUSIC method:
-
-```bash
-python YOLO_baseline.py --data_dir ./data/my_exp --num_test_samples 1000
-```
+**What happens:**
+1.  The script identifies all valid `auto_pipeline_*` folders in `newversion/data/`.
+2.  For each dataset:
+    *   It determines the number of targets (K).
+    *   It retrieves the target list of Pt levels (e.g., [-10, 0, 10, 20] dBm).
+    *   It runs `train.py` (using BCE Loss).
+    *   It evaluates performance using `CFARNet.py`.
+3.  All results are aggregated.
 
 ---
 
-## Dependencies
+### 3. Output & Results
 
-- Python 3.10+
-- numpy, torch, matplotlib, tqdm, scipy, torchvision, pandas, etc.
-- Detailed dependencies see `environment.yml`
+All pipeline results are stored in the **`bce0112/`** directory.
 
----
-
-## Data Structure Description
-
-Generated data is saved in the specified directory, mainly including:
-
-- `echoes/`: Chunked echo channel parameters
-- `trajectory_data.npz`: Target trajectories and peak indices
-- `system_params.npz`: System parameter configuration
-
----
-
-## Contribution and License
-
-We welcome anyone to submit PRs or issues to improve this project.
-
-This project is licensed under the MIT License.
-
----
-
-## Recent Updates
-
-### Code Internationalization (Latest)
-- ✅ **All Chinese comments and text have been translated to English** across all Python files
-- ✅ **English-only codebase** for better international collaboration and accessibility
-- ✅ **Comprehensive translation** of:
-  - Function and class docstrings
-  - Inline comments explaining algorithms and logic
-  - Error messages and warnings
-  - Print statements and user interface text
-  - Parameter descriptions and help text
-  - File headers and section comments
-
-This ensures the codebase is fully accessible to international researchers and developers working with radar signal processing and deep learning.
-
----
-
-## Detailed File Descriptions
-
-### data_generation.py
-Mainly used for simulating radar echo signals, target trajectories, system parameters, etc. Supports batch generation and chunked storage for large-scale dataset creation. Allows customization of target numbers, motion patterns, noise parameters, etc.
-
-### trajectory.py
-Responsible for generating 2D target trajectories, supporting circular, random, fixed-angle and other modes. Allows flexible configuration of target initial position, velocity, angle and other parameters.
-
-### train.py
-Main deep learning training script supporting CNN and other model training, validation, and testing. Built-in multiple loss functions, evaluation metrics, and visualization tools. Supports checkpoint resumption and automatic experiment result saving.
-
-### CFARNet.py
-Implements the proposed CFARNet neural network method for high-resolution multi-target detection. This is the main contribution of the paper, using CNN-based peak detection in the angle-Doppler domain to replace traditional CFAR methods.
-
-### YOLO_baseline.py
-Implements traditional CFAR+MUSIC baseline method for comparison with the proposed CFARNet approach. Provides performance benchmarks to demonstrate the superiority of the neural network-based method.
-
-### functions.py
-Provides core utility functions for dataset loading, signal processing, feature extraction, evaluation metrics, etc. Facilitates main process script calls and improves code reusability.
-
-### environment.yml
-Conda environment configuration containing all dependency packages and versions to ensure environment consistency.
-
----
+*   **`bce0112/final_summary.txt`**: This is the primary result file. It contains a consolidated table of performance metrics (Accuracy, RMSE, etc.) for all processed K and Pt combinations.
+*   **`bce0112/log_<experiment_name>.txt`**: Detailed execution logs for specific experiments.
 
 
