@@ -13,9 +13,9 @@ from tqdm import tqdm
 
 # ================= CONFIG =================
 NUM_TEST_SAMPLES = 7500
-BATCH_SIZE = 1 # Keep user config
+BATCH_SIZE = 32 # Optimized Batch Size
 K_TARGETS_LIST = [1, 2, 3, 4, 5]
-PT_LIST = [50]
+PT_LIST = [45]
 # We want to test on the "d1" dataset for each K.
 RESULTS_FILENAME = "results_k_sweep.txt"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -125,20 +125,18 @@ def run_music(y_sample, m_peak, M, f_scs, f0):
         # Noise subspace (all but last eigenvector) - Assuming 1 target per peak
         Un_t = V_t[:, :-1] 
 
-        # Vectorized Search
-        v_grid = np.linspace(-15, 15, 400)
-        t_vec = np.arange(Ns) * (1/f_scs)
-        
-        # Steering Matrix: (Ns, 400)
-        # Phase = 4*pi*f0/c * t * v
-        scale_v = 4 * np.pi * f0 / 3e8
+        # High-precision vectorized search (latest parameters)
+        v_grid = np.linspace(-10.5, 10.5, 1001)
+        t_vec = np.arange(Ns) * (1.0 / f_scs)
+
+        # Use configured center frequency for velocity steering
+        fm = f0 + (int(m_peak) * f_scs)
+        scale_v = 4 * np.pi * fm / 3e8
         phase_mat = np.outer(t_vec, scale_v * v_grid)
-        steer_mat = np.exp(1j * phase_mat) # (Ns, 400)
-        
-        # Project: |U^H @ a(v)|^2
+        steer_mat = np.exp(1j * phase_mat)
+
         proj = Un_t.conj().T @ steer_mat
-        denom = np.sum(np.abs(proj)**2, axis=0) # (400,)
-        
+        denom = np.sum(np.abs(proj)**2, axis=0)
         v_est = v_grid[np.argmin(denom)]
     except: v_est = np.nan
 
@@ -148,19 +146,17 @@ def run_music(y_sample, m_peak, M, f_scs, f0):
     try:
         _, V_f = np.linalg.eigh(R_f)
         Un_f = V_f[:, :-1]
-        
-        r_grid = np.linspace(10, 100, 400)
+
+        # High-precision range grid (latest parameters)
+        r_grid = np.arange(34.5, 100.5, 0.01)
         f_vec = np.arange(K_sub) * f_scs
-        
-        # Steering Matrix: (K_sub, 400)
-        # Phase = -4*pi/c * f * r
+
         scale_r = -4 * np.pi / 3e8
         phase_mat = np.outer(f_vec, scale_r * r_grid)
         steer_mat = np.exp(1j * phase_mat)
-        
+
         proj = Un_f.conj().T @ steer_mat
         denom = np.sum(np.abs(proj)**2, axis=0)
-        
         r_est = r_grid[np.argmin(denom)]
     except: r_est = np.nan
 
@@ -221,144 +217,153 @@ def compute_metrics(est_targets, true_targets):
 
 # --- 3. Evaluation Functions ---
 
+def noise_std_and_scale(pt_dbm, BW):
+    """Return noise_std and scale_factor used by both YOLO and CFARNet."""
+    noise_pow = 1.38e-23 * 290 * BW * 1000
+    noise_std = math.sqrt(noise_pow / 2)
+    # Note: K_sweep can also support NOISE_ENABLED if we add the flag, 
+    # but here we follow default behavior or add flag if consistent.
+    # Assuming standard behavior.
+    scale_factor = math.sqrt(10**(pt_dbm/10))
+    return noise_std, scale_factor
+
 def evaluate_yolo(data_dir, pt_dbm, sys_params, k_targets):
     M = int(sys_params['M']); Ns = int(sys_params['Ns'])
     BW = float(sys_params['BW']); f_scs = float(sys_params['f_scs'])
     f0 = float(sys_params['f0'])
     
-    # YOLO Config
+    # YOLO Config (Batch-Optimized & Vectorized NMS)
     GUARD_DOPPLER, REF_DOPPLER = 2, 4
     GUARD_ANGLE, REF_ANGLE = 1, 4
-    CFAR_ALPHA = 1.5
-    MUSIC_EXCL = 12
-    
+    CFAR_ALPHA = 0.8  # Consistent with calculate_2d_rmse
+    MUSIC_EXCL = 80   # Consistent with calculate_2d_rmse
+    LOCAL_MAX_WINDOW = 1
+
     ds = ChunkedEchoDataset(data_dir, 0, NUM_TEST_SAMPLES-1, k_targets)
     loader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0, pin_memory=True)
-    
-    noise_pow = 1.38e-23 * 290 * BW * 1000
-    noise_std = math.sqrt(noise_pow / 2)
-    scale_factor = math.sqrt(10**(pt_dbm/10))
-    
+
+    noise_std, scale_factor = noise_std_and_scale(pt_dbm, BW)
+
     all_2d_errors = []
     all_angle_errors = []
     all_range_errors = []
     all_velocity_errors = []
 
-    # Pre-calculate Kernels for CFAR Conv2d
+    # Pre-calculate CFAR kernel with inner guard zeros
     outer_d = 2 * (REF_DOPPLER + GUARD_DOPPLER) + 1
     outer_a = 2 * (REF_ANGLE + GUARD_ANGLE) + 1
-    kernel_outer = torch.ones((1, 1, outer_d, outer_a), device=DEVICE)
-    
+    kernel_cfar = torch.ones((1, 1, outer_d, outer_a), device=DEVICE)
     inner_d = 2 * GUARD_DOPPLER + 1
     inner_a = 2 * GUARD_ANGLE + 1
-    kernel_inner = torch.ones((1, 1, inner_d, inner_a), device=DEVICE)
-    
-    n_norm = (outer_d * outer_a) - (inner_d * inner_a)
-    
+    start_d = (outer_d - inner_d) // 2
+    start_a = (outer_a - inner_a) // 2
+    kernel_cfar[:, :, start_d:start_d+inner_d, start_a:start_a+inner_a] = 0
+    n_norm = kernel_cfar.sum()
+
     for i, batch in enumerate(tqdm(loader, desc=f"YOLO K={k_targets} Pt={pt_dbm}", leave=False)):
         echo = batch['echo'].to(DEVICE)
         gt_th_batch = batch['theta'].numpy()
         gt_r_batch = batch['r'].numpy()
         gt_v_batch = batch['vr'].numpy()
-        
+
         B_size = echo.shape[0]
-        
+
         # Add Noise & FFT
         noise = (torch.randn_like(echo.real) + 1j*torch.randn_like(echo.imag)) * noise_std
         y_noisy_gpu = echo * scale_factor + noise
+
         y_fft = torch.fft.fft(y_noisy_gpu, dim=1)
         G_AD_batch = torch.abs(torch.fft.fftshift(y_fft, dim=1))
-        
-        # CFAR
+
         img = G_AD_batch.unsqueeze(1)
-        pad_d, pad_a = (REF_DOPPLER + GUARD_DOPPLER), (REF_ANGLE + GUARD_ANGLE)
-        sum_outer = F.conv2d(img, kernel_outer, padding=(pad_d, pad_a)) 
-        sum_inner = F.conv2d(img, kernel_inner, padding=(GUARD_DOPPLER, GUARD_ANGLE))
-        threshold = CFAR_ALPHA * (sum_outer - sum_inner) / n_norm
-        mask_batch = (img > threshold) 
-        
-        # Edge Cutting
-        cut_d, cut_a = pad_d, pad_a
+        pad_d = (outer_d - 1) // 2
+        pad_a = (outer_a - 1) // 2
+        img_padded = F.pad(img, (pad_a, pad_a, pad_d, pad_d), mode='replicate')
+
+        noise_sum = F.conv2d(img_padded, kernel_cfar)
+        threshold = (noise_sum / n_norm) * CFAR_ALPHA
+        mask_batch = (img > threshold)
+
+        # Edge suppression
+        cut_d = REF_DOPPLER + GUARD_DOPPLER
+        cut_a = REF_ANGLE + GUARD_ANGLE
         mask_batch[:, :, :cut_d, :] = False
         mask_batch[:, :, -cut_d:, :] = False
         mask_batch[:, :, :, :cut_a] = False
         mask_batch[:, :, :, -cut_a:] = False
 
-        # Process Peaks (CPU)
-        mask_np = mask_batch.squeeze(1).cpu().numpy()
-        G_AD_np = G_AD_batch.cpu().numpy()
+        # NMS (local max)
+        nms_win = 2 * LOCAL_MAX_WINDOW + 1
+        pad_nms = LOCAL_MAX_WINDOW
+        G_max = F.max_pool2d(img, kernel_size=nms_win, stride=1, padding=pad_nms)
+        is_peak = (img == G_max) & mask_batch
+
+        peak_coords = torch.nonzero(is_peak, as_tuple=False)
+
         y_noisy_np = y_noisy_gpu.cpu().numpy()
+        # G_AD_batch is needed on CPU for power lookup if not using peak_coords values directly? 
+        # Actually calculate_2d code uses G_AD_batch[b, d, m] via indexing.
+        
+        # We need G_AD on GPU for gathering powers or CPU. 
+        # calculate_2d used: powers = G_AD_batch[b, d_indices, m_indices]
+        # which implies G_AD_batch is still on GPU.
         
         for b in range(B_size):
-            mask = mask_np[b]
-            G_AD = G_AD_np[b]
+            b_mask = (peak_coords[:, 0] == b)
+            sample_peaks = peak_coords[b_mask]
+
+            if sample_peaks.shape[0] == 0:
+                picks = []
+            else:
+                d_indices = sample_peaks[:, 2]
+                m_indices = sample_peaks[:, 3]
+                powers = G_AD_batch[b, d_indices, m_indices]
+                sorted_vals, sorted_idx = torch.sort(powers, descending=True)
+                sorted_d = d_indices[sorted_idx]
+                sorted_m = m_indices[sorted_idx]
+
+                picks = []
+                is_suppressed = torch.zeros(len(sorted_vals), dtype=torch.bool, device=DEVICE)
+
+                for k in range(len(sorted_vals)):
+                    if is_suppressed[k]:
+                        continue
+                    picks.append((sorted_d[k].item(), sorted_m[k].item()))
+                    if len(picks) >= k_targets:
+                        break
+                    diff_m = torch.abs(sorted_m - sorted_m[k])
+                    suppress_mask = (diff_m < MUSIC_EXCL)
+                    is_suppressed = is_suppressed | suppress_mask
+
+            # MUSIC & Metrics
             y_sample = y_noisy_np[b]
-            
-            # === [Updated Logic] Forced K Selection with NMS ===
-            picks = [] # [(d, m), ...]
-            
-            def is_conflict(new_m, current_picks):
-                for (_, pm) in current_picks:
-                    if abs(new_m - pm) < MUSIC_EXCL:
-                        return True
-                return False
-            
-            # 1. Select from CFAR Candidates
-            cands = np.argwhere(mask)
-            if len(cands) > 0:
-                d_c, m_c = cands[:,0], cands[:,1]
-                pwr = G_AD[d_c, m_c]
-                sort_idx = np.argsort(-pwr)
-                
-                for pid in sort_idx:
-                    curr_d, curr_m = d_c[pid], m_c[pid]
-                    if not is_conflict(curr_m, picks):
-                        picks.append((curr_d, curr_m))
-                    if len(picks) >= k_targets: break
-            
-            # 2. Fallback (Forced Completion)
-            if len(picks) < k_targets:
-                flat_indices = np.argsort(-G_AD.ravel())
-                for flat_idx in flat_indices:
-                    if len(picks) >= k_targets: break
-                    
-                    d_idx, m_idx = np.unravel_index(flat_idx, G_AD.shape)
-                    if not is_conflict(m_idx, picks):
-                        picks.append((d_idx, m_idx))
-            
-            # Run MUSIC
             est_targets = []
             for (d_idx, m_idx) in picks:
                 ang = calculate_angle_from_m(m_idx, f_scs, BW, f0)
                 r, v = run_music(y_sample, m_idx, M, f_scs, f0)
                 est_targets.append([ang, r, v])
-                
+
             est_targets = np.array(est_targets)
-            
-            # GT & Metrics
+
             gt_th = gt_th_batch[b]
             gt_r = gt_r_batch[b]
             gt_v = gt_v_batch[b]
-            # Handle variable K in GT (if batching > 1, this needs care, but here B=1 or manual loop handles it)
-            # If K varies per sample, gt_* might be padded. 
-            # But here we assume dataset is homogeneous for k_targets (ChunkedEchoDataset expects expected_k)
-            # Or gt_* is [K] shape.
             
-            # Safely stacking GT
-            # Ensure dims match
+            # Handle GT scalars (if dataset yields scalars for single target, but K_targets varies)
             if np.ndim(gt_th) == 0: gt_th = np.array([gt_th])
             if np.ndim(gt_r) == 0: gt_r = np.array([gt_r])
             if np.ndim(gt_v) == 0: gt_v = np.array([gt_v])
             
             true_targets = np.column_stack((gt_th, gt_r, gt_v))
-            
+
             errs_2d, errs_ang, errs_rng, errs_vel = compute_metrics(est_targets, true_targets)
             all_2d_errors.extend(errs_2d)
             all_angle_errors.extend(errs_ang)
             all_range_errors.extend(errs_rng)
             all_velocity_errors.extend(errs_vel)
-        
+
     return np.array(all_2d_errors), np.array(all_angle_errors), np.array(all_range_errors), np.array(all_velocity_errors)
+
 
 def evaluate_cfarnet(data_dir, model_path, pt_dbm, sys_params, k_targets):
     M = int(sys_params['M']); Ns = int(sys_params['Ns'])
@@ -372,9 +377,7 @@ def evaluate_cfarnet(data_dir, model_path, pt_dbm, sys_params, k_targets):
     ds = ChunkedEchoDataset(data_dir, 0, NUM_TEST_SAMPLES-1, k_targets)
     loader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0, pin_memory=True)
     
-    noise_pow = 1.38e-23 * 290 * BW * 1000
-    noise_std = math.sqrt(noise_pow / 2)
-    scale_factor = math.sqrt(10**(pt_dbm/10))
+    noise_std, scale_factor = noise_std_and_scale(pt_dbm, BW)
     
     all_range_errors = []
     all_velocity_errors = []
@@ -437,7 +440,7 @@ def main():
     print("Starting K-Sweep Evaluation...")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     data_root = os.path.join(script_dir, "data")
-    output_root = os.path.join(script_dir, "bce0112")
+    output_root = os.path.join(script_dir, "bce0122")
     results_file = os.path.join(script_dir, RESULTS_FILENAME)
     
     with open(results_file, "w") as f:

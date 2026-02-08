@@ -144,22 +144,18 @@ def pipeline_worker(dataset_path, pt):
     gpu_id = gpu_queue.get()
     try:
         # Train
-        model_path = train_task(dataset_path, pt, gpu_id)
-        if model_path:
-            # Test
-            test_task(dataset_path, model_path, pt, gpu_id)
+        train_task(dataset_path, pt, gpu_id)
+        # Test removed as per request
     finally:
         gpu_queue.put(gpu_id)
 
 def summarize_results():
-    print("\n[Summary] Generating Final Report...")
-    report_path = os.path.join(OUTPUT_ROOT, "final_summary.txt")
+    print("\n[Summary] Generating Final Report (Training Check)...")
+    report_path = os.path.join(OUTPUT_ROOT, "training_summary.txt")
     
     results = []
     
-    # Search for all test logs
-    # Structure: bce0112/<dataset>/ptXX/log_test_*.txt
-    
+    # Check for presence of model files
     dataset_dirs = glob.glob(os.path.join(OUTPUT_ROOT, "*"))
     for d_dir in sorted(dataset_dirs):
         if not os.path.isdir(d_dir): continue
@@ -169,38 +165,18 @@ def summarize_results():
         for p_dir in sorted(pt_dirs):
             pt_str = os.path.basename(p_dir) # pt50
             
-            # Read YOLO Log
-            yolo_log = os.path.join(p_dir, "log_test_yolo.txt")
-            cfar_log = os.path.join(p_dir, "log_test_cfarnet.txt")
+            model_file = os.path.join(p_dir, f"model_{pt_str}_best.pt")
+            status = "Present" if os.path.exists(model_file) else "Missing"
             
-            row = {'name': dataset_name, 'pt': pt_str, 'yolo_90': 'N/A', 'cfar_90': 'N/A'}
-            
-            # Parse YOLO
-            if os.path.exists(yolo_log):
-                with open(yolo_log, 'r') as f:
-                    content = f.read()
-                    # Look for "2D Pos (m)  : ... | 90%=X.XXXX"
-                    match = re.search(r'2D Pos \(m\)\s*:\s*RMSE=[\d\.]+\s*\|\s*90%=([\d\.]+)', content)
-                    if match: row['yolo_90'] = match.group(1)
-            
-            # Parse CFARNet
-            if os.path.exists(cfar_log):
-                with open(cfar_log, 'r') as f:
-                    content = f.read()
-                    # Look for "2D Pos (m)  : ... | 90%=X.XXXX"
-                    match = re.search(r'2D Pos \(m\)\s*:\s*RMSE=[\d\.]+\s*\|\s*90%=([\d\.]+)', content)
-                    if match: row['cfar_90'] = match.group(1)
-            
-            results.append(row)
+            results.append({'name': dataset_name, 'pt': pt_str, 'status': status})
             
     with open(report_path, 'w') as f:
-        f.write(f"{'Dataset':<50} | {'Pt':<5} | {'YOLO 90% Err':<12} | {'CFARNet 90% Err':<12}\n")
-        f.write("-" * 90 + "\n")
+        f.write(f"{'Dataset':<50} | {'Pt':<5} | {'Model Status':<12}\n")
+        f.write("-" * 75 + "\n")
         for r in results:
-            f.write(f"{r['name']:<50} | {r['pt']:<5} | {r['yolo_90']:<12} | {r['cfar_90']:<12}\n")
+            f.write(f"{r['name']:<50} | {r['pt']:<5} | {r['status']:<12}\n")
             
     print(f"[Summary] Report saved to {report_path}")
-    # print(open(report_path).read()) # Avoid printing huge text in terminal if many entries
 
 def main():
     if not os.path.exists(OUTPUT_ROOT):

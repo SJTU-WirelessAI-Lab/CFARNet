@@ -13,7 +13,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 # ================= CONFIG =================
-NUM_TEST_SAMPLES = 2000
+NUM_TEST_SAMPLES = 7500
 BATCH_SIZE = 32  # Optimized Batch Size
 K_TARGETS_LIST = [3]
 PT_LIST = [45, 50,55,60]
@@ -148,7 +148,8 @@ def run_music(y_sample, m_peak, M, f_scs, f0):
         t_vec = np.arange(Ns) * (1.0 / f_scs)
 
         # Use configured center frequency for velocity steering
-        scale_v = 4 * np.pi * f0 / 3e8
+        fm = f0 + (int(m_peak) * f_scs)
+        scale_v = 4 * np.pi * fm / 3e8
         phase_mat = np.outer(t_vec, scale_v * v_grid)
         steer_mat = np.exp(1j * phase_mat)
 
