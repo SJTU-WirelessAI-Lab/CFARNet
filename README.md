@@ -87,7 +87,7 @@ Run the automated pipeline to scan for datasets and train models.
 ```bash
 python pipeline.py
 ```
-*This script will scan for generated datasets in `data/` and train a model for each configuration. Trained models are saved in `bce0112/` (or similar output directory).*
+*This script will scan for generated datasets in `data/` and train a model for each configuration. It checks for successful model generation and outputs a `training_summary.txt`, but does not run performance evaluation.*
 
 ### 3. Evaluation & Benchmarking
 
@@ -98,14 +98,14 @@ This script loads the trained model and test datasets, runs inference, and calcu
 ```bash
 python calculate_2d_rmse.py
 ```
-*   **Output**: `newversion/results_2d_rmse.txt`
+*   **Output**: `results_2d_rmse.txt`
 
 **B. Performance vs. Number of Targets ($K$):**
 This script evaluates how performance degrades as $K$ increases.
 ```bash
-python newversion/calculate_k_sweep.py
+python calculate_k_sweep.py
 ```
-*   **Output**: `newversion/results_k_sweep.txt`
+*   **Output**: `results_k_sweep.txt`
 
 ### 4. Visualization
 
@@ -114,16 +114,16 @@ Generate paper-ready figures from the evaluation results.
 **Plot P90 Error vs Pt (grouped by Delta):**
 ```bash
 # Reads results_2d_rmse.txt
-python newversion/plot_p90_multi.py
+python plot_p90_multi.py
 ```
-*   **Output**: `newversion/plots/90th_p90_styled.png` (Legend at top, style matched to paper).
+*   **Output**: `plots/90th_p90_styled.png` (Legend at top, style matched to paper).
 
 **Plot P90 Error vs K:**
 ```bash
 # Reads results_k_sweep.txt
-python newversion/plot_k_sweep_p90.py
+python plot_k_sweep_p90.py
 ```
-*   **Output**: `newversion/plots/plot_k_sweep_p90.png`.
+*   **Output**: `plots/plot_k_sweep_p90.png`.
 
 ---
 
